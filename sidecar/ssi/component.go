@@ -1,52 +1,76 @@
-// Package ssi: implementation of IComponent that wraps the native cloudflared
-// binary. See types.go for the interface and data-shape definitions.
+// Package ssi: implementation of the SkyNet SSI component lifecycle
+// for the cloudflared sidecar.
+//
+// The struct here is called CloudflaredComponent for historical reasons —
+// originally it only knew how to fork the cloudflared binary. Today it
+// delegates all traffic work to the pluggable Backend interface (see
+// the tunnel package). This means the same component now supports:
+//
+//   - cloudflare  → fork the official binary (default)
+//   - tcp-relay   → simple self-hosted TCP forwarder
+//   - skynet-p2p  → device-to-device over the SkyNet peer-to-peer layer
+//   - http-proxy  → local HTTP CONNECT proxy over the active tunnel
+//   - socks5      → local SOCKS5 proxy over the active tunnel
 package ssi
 
 import (
-	"bufio"
 	"context"
-	"os"
-	"os/exec"
-	"path/filepath"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/cloudflare/cloudflared/sidecar/tunnel"
 )
 
-// CloudflaredComponent is the SSI wrapper around a single cloudflared process.
-// One instance manages exactly one tunnel. Run multiple instances when you
-// want to expose multiple origins — that is the whole point of the component
-// model: every tunnel is its own independently-managed unit.
+// CloudflaredComponent is the SSI wrapper around a single backend.
+// One instance manages exactly one tunnel.
 type CloudflaredComponent struct {
 	mu sync.RWMutex
 
 	state ComponentState
 	cfg   Config
-	cmd   *exec.Cmd
-	logs  *logBuffer
 
-	// stop cancels the running process. nil when no process is running.
-	stop func()
+	// backend is the active traffic backend. Set in Init() and
+	// replaced when the component cycles Init/Start again.
+	backend tunnel.Backend
 
-	// exited is closed by the watcher goroutine when the child process has
-	// been reaped. Both Start() and Stop() select on it so they can react to
-	// an unexpected crash in addition to the explicit kill path. The channel
-	// is replaced each time Start() is called, so old channels do not race
-	// with the new watcher.
-	exited chan struct{}
+	// logs is a lightweight ring buffer for the sidecar's own event
+	// log (state transitions, warnings). Kept separate from child
+	// process output so each backend can choose its own log
+	// strategy.
+	logs *ringBuffer
 }
 
 // NewCloudflaredComponent constructs a component in the CREATED state.
 func NewCloudflaredComponent() *CloudflaredComponent {
 	return &CloudflaredComponent{
 		state: StateCreated,
-		logs:  newLogBuffer(4096),
+		logs:  newRingBuffer(256),
 	}
 }
 
-// Init validates and stores the configuration. It does not start any process;
-// the SkyNet runtime calls Start() separately so it can decide when to bring
-// the tunnel online.
+// RecentLines returns the most recent N lines of the sidecar's own
+// event log. This is the get_logs RPC data source — keep it cheap.
+func (c *CloudflaredComponent) RecentLines(n int) []string {
+	if c == nil || c.logs == nil {
+		return nil
+	}
+	return c.logs.tail(n)
+}
+
+// logLine appends a line to the component's event ring buffer. Safe
+// to call concurrently.
+func (c *CloudflaredComponent) logLine(format string, args ...any) {
+	if c == nil || c.logs == nil {
+		return
+	}
+	c.logs.append(fmt.Sprintf("[%s] %s", time.Now().UTC().Format("15:04:05"), fmt.Sprintf(format, args...)))
+}
+
+// Init validates the configuration and constructs a backend based on
+// cfg.Backend. We do not start any process here so the runtime can
+// keep initialising other components in parallel.
 func (c *CloudflaredComponent) Init(ctx context.Context, cfg Config) *SsiError {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -56,153 +80,140 @@ func (c *CloudflaredComponent) Init(ctx context.Context, cfg Config) *SsiError {
 	}
 	c.state = StateInitializing
 
-	// Resolve binary path so Start() fails fast if cloudflared is missing.
-	bin := cfg.BinaryPath
-	if bin == "" {
-		bin = "cloudflared"
-	}
-	if _, err := exec.LookPath(bin); err != nil {
-		c.state = StateError
-		return &SsiError{Code: ErrNotFound, Message: "cloudflared not found: " + err.Error()}
+	// Map the IPC-level Config to the backend-level tunnel.Config.
+	// Keeping the two types separate lets the IPC wire format stay
+	// stable even as we add more backend-specific knobs.
+	tcfg := tunnel.Config{
+		Type:         cfg.Backend,
+		Name:         cfg.Name,
+		OriginURL:    cfg.OriginURL,
+		CloudflareMode: cfg.Mode,
+		CloudflareBinary: cfg.BinaryPath,
+		ListenAddress: cfg.ListenAddress,
+		RelayTarget: cfg.RelayTarget,
+		ProxyListen: cfg.ProxyListen,
+		ExtraArgs:   cfg.ExtraArgs,
+		AccessHostname:    cfg.Hostname,
+		AccessDestination: cfg.Destination,
+		StartTimeoutSeconds:       float64(cfg.StartTimeout.Seconds()),
+		ShutdownGracePeriodSeconds: float64(cfg.ShutdownGracePeriod.Seconds()),
 	}
 
+	if tcfg.Name == "" {
+		tcfg.Name = "cloudflared-default"
+	}
+	if tcfg.Type == "" {
+		tcfg.Type = tunnel.TypeCloudflare
+	}
+
+	b, err := tunnel.NewBackend(tcfg)
+	if err != nil {
+		c.state = StateError
+		return &SsiError{Code: ErrConfigInvalid, Message: err.Error()}
+	}
+	c.backend = b
 	c.cfg = cfg
 	c.state = StateInitialized
 	return nil
 }
 
-// Start launches cloudflared and blocks until the process is confirmed up or
-// the start-timeout elapses. On success the component transitions to RUNNING.
+// Start brings up the backend. Blocks until the backend reports ready,
+// the context expires, or the startup timeout elapses.
 func (c *CloudflaredComponent) Start(ctx context.Context) *SsiError {
 	c.mu.Lock()
 	if c.state != StateInitialized && c.state != StateStopped && c.state != StatePaused {
 		defer c.mu.Unlock()
 		return &SsiError{Code: ErrInvalidState, Message: "cannot start from state " + c.state.String()}
 	}
-	c.state = StateStarting
-
-	args := c.buildArgs()
-	cmd := exec.CommandContext(ctx, c.resolvedBinary(), args...)
-	cmd.Stdout = c.logs.newWriter("out")
-	cmd.Stderr = c.logs.newWriter("err")
-	// Propagate TERM/INT signals through an explicit stop() call instead of
-	// relying on the default child-signalling behaviour of exec.CommandContext
-	// — that way the graceful-shutdown deadline is controlled by us.
-	cmd.Cancel = func() error { return nil } // we drive termination explicitly
-
-	if err := cmd.Start(); err != nil {
-		c.state = StateError
-		c.mu.Unlock()
-		return &SsiError{Code: ErrProcessStart, Message: "start failed: " + err.Error()}
+	if c.backend == nil {
+		defer c.mu.Unlock()
+		return &SsiError{Code: ErrInvalidState, Message: "not initialised — call init first"}
 	}
-	c.cmd = cmd
-	c.exited = make(chan struct{})
-	exited := c.exited
-	_, cancel := context.WithCancel(context.Background())
-	c.stop = cancel
+	startTimeout := c.cfg.StartTimeout
+	if startTimeout <= 0 {
+		startTimeout = 30 * time.Second
+	}
+	c.state = StateStarting
 	c.mu.Unlock()
 
-	// Watch for unexpected process exit. The single Wait() call lives here so
-	// Stop() can rely on the same hook without double-Wait()ing the process.
-	go c.watchProcessExit(cmd, exited)
-
-	// Wait for the startup probe to confirm the tunnel is connected.
-	ready := make(chan struct{})
-	go c.waitForStartup(ctx, ready)
+	// Start is a blocking call on the backend; it returns nil when the
+	// tunnel is up or an error if it never came up. We wrap this in a
+	// goroutine so the caller can cancel via ctx.
+	startErr := make(chan error, 1)
+	go func() {
+		startErr <- c.backend.Start(ctx)
+	}()
 
 	select {
-	case <-ready:
+	case err := <-startErr:
+		if err != nil {
+			c.mu.Lock()
+			c.state = StateError
+			c.mu.Unlock()
+			return &SsiError{Code: ErrProcessStart, Message: err.Error()}
+		}
 		c.mu.Lock()
 		c.state = StateRunning
 		c.mu.Unlock()
 		return nil
-	case <-exited:
-		// Process exited before reaching RUNNING — start failed.
-		c.mu.Lock()
-		c.state = StateError
-		c.mu.Unlock()
-		return &SsiError{Code: ErrProcessStart, Message: "cloudflared exited before startup probe succeeded"}
 	case <-ctx.Done():
-		// SkyNet asked us to give up. Stop the child process and report error.
-		// Guard against stop being nil (should not happen, but defensive).
-		if c.stop != nil {
-			c.stop()
-		}
 		c.mu.Lock()
 		c.state = StateError
 		c.mu.Unlock()
+		// Best-effort: ask backend to stop; swallow the stop-error
+		// because the caller already knows about the cancellation.
+		_ = c.backend.Stop(context.Background())
 		return &SsiError{Code: ErrProcessStart, Message: "start cancelled: " + ctx.Err().Error()}
-	case <-time.After(c.cfg.StartTimeout):
-		// Timeout — stop the child if it is still running.
-		if c.stop != nil {
-			c.stop()
-		}
+	case <-time.After(startTimeout):
 		c.mu.Lock()
 		c.state = StateError
 		c.mu.Unlock()
-		return &SsiError{Code: ErrProcessStart, Message: "start timeout after " + c.cfg.StartTimeout.String()}
+		_ = c.backend.Stop(context.Background())
+		return &SsiError{Code: ErrProcessStart, Message: "start timeout after " + startTimeout.String()}
 	}
 }
 
-// Stop terminates the cloudflared process gracefully. Repeated calls after the
-// first one are no-ops.
+// Stop tears down the backend. Idempotent — safe to call multiple
+// times.
 func (c *CloudflaredComponent) Stop(ctx context.Context) *SsiError {
 	c.mu.Lock()
-	if c.state != StateRunning && c.state != StatePaused {
+	if c.state != StateRunning && c.state != StatePaused && c.state != StateStarting {
 		defer c.mu.Unlock()
 		return &SsiError{Code: ErrInvalidState, Message: "not running (state=" + c.state.String() + ")"}
 	}
 	c.state = StateStopping
-	cmd := c.cmd
-	exited := c.exited
-	c.stop = nil
+	backend := c.backend
 	c.mu.Unlock()
 
-	if cmd == nil || cmd.Process == nil || exited == nil {
+	if backend == nil {
 		c.mu.Lock()
 		c.state = StateStopped
 		c.mu.Unlock()
 		return nil
 	}
 
-	// SIGTERM (Interrupt) → grace period → SIGKILL. The watcher goroutine
-	// owns the single cmd.Wait() call; we just signal and wait for the
-	// `exited` channel to close.
-	_ = cmd.Process.Signal(os.Interrupt)
-
-	select {
-	case <-exited:
-		// Process exited (either by interrupt, kill, or crash). cmd.ProcessState
-		// is now populated; inspect it to decide whether the exit was clean.
-		c.mu.Lock()
-		c.cmd = nil
-		c.exited = nil
-		c.state = StateStopped
-		c.mu.Unlock()
-		if cmd.ProcessState != nil && !cmd.ProcessState.Success() {
-			// The only way to get here is a crash or signal-induced exit that
-			// is not "exited normally" (status 0). Treat as a stop error.
-			return &SsiError{Code: ErrProcessStop, Message: cmd.ProcessState.String()}
-		}
-		return nil
-	case <-time.After(c.cfg.ShutdownGracePeriod):
-		// Grace period expired. Force-kill and wait for the watcher to reap
-		// the process so we don't leak a zombie and so c.cmd is fully
-		// released before any subsequent Start().
-		_ = cmd.Process.Kill()
-		<-exited
-		c.mu.Lock()
-		c.cmd = nil
-		c.exited = nil
-		c.state = StateStopped
-		c.mu.Unlock()
-		return nil
+	// Give the backend a bounded time to stop cleanly; fall back to a
+	// forced kill via the parent context deadline if it drags its feet.
+	stopCtx := ctx
+	var cancel context.CancelFunc
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		stopCtx, cancel = context.WithTimeout(context.Background(), c.cfg.ShutdownGracePeriod)
+		defer cancel()
 	}
+	if err := backend.Stop(stopCtx); err != nil {
+		c.mu.Lock()
+		c.state = StateError
+		c.mu.Unlock()
+		return &SsiError{Code: ErrProcessStop, Message: err.Error()}
+	}
+	c.mu.Lock()
+	c.state = StateStopped
+	c.mu.Unlock()
+	return nil
 }
 
-// Pause stops cloudflared but retains the configuration so Resume() can bring
-// it back up without repeating Init(). Pause is the SkyNet-native concept that
-// maps cleanly to "stop the tunnel but remember how to restart it".
+// Pause maps cleanly to "stop the traffic but keep the configuration"
+// — that is exactly Stop with a different state marker.
 func (c *CloudflaredComponent) Pause(ctx context.Context) *SsiError {
 	c.mu.RLock()
 	state := c.state
@@ -210,11 +221,8 @@ func (c *CloudflaredComponent) Pause(ctx context.Context) *SsiError {
 	if state != StateRunning {
 		return &SsiError{Code: ErrInvalidState, Message: "cannot pause from " + state.String()}
 	}
-	c.mu.Lock()
-	c.state = StatePausing
-	c.mu.Unlock()
-	if serr := c.Stop(ctx); serr != nil {
-		return serr
+	if err := c.Stop(ctx); err != nil {
+		return err
 	}
 	c.mu.Lock()
 	c.state = StatePaused
@@ -222,7 +230,8 @@ func (c *CloudflaredComponent) Pause(ctx context.Context) *SsiError {
 	return nil
 }
 
-// Resume brings a paused tunnel back online.
+// Resume from PAUSED is simply another Start() — the configuration is
+// still attached to the component.
 func (c *CloudflaredComponent) Resume(ctx context.Context) *SsiError {
 	c.mu.RLock()
 	state := c.state
@@ -243,175 +252,125 @@ func (c *CloudflaredComponent) GetState() ComponentState {
 	return c.state
 }
 
-// RecentLogs returns the latest N lines of stdout/stderr captured from the
-// child process. Useful for SkyNet dashboards to surface tunnel health without
-// needing filesystem access.
-func (c *CloudflaredComponent) RecentLines(n int) []string { return c.logs.tail(n) }
-
-// ---- internal helpers -----------------------------------------------------
-
-func (c *CloudflaredComponent) resolvedBinary() string {
-	bin := c.cfg.BinaryPath
-	if bin == "" {
-		bin = "cloudflared"
-	}
-	if p, err := exec.LookPath(bin); err == nil {
-		return p
-	}
-	return bin
-}
-
-// buildArgs expands the mode into the cloudflared sub-command arguments.
-// Keep this list small — any configuration beyond the core three modes should
-// go through ExtraArgs so that SkyNet operators can tune without code changes.
-func (c *CloudflaredComponent) buildArgs() []string {
-	var args []string
-	switch c.cfg.Mode {
-	case "tunnel":
-		// cloudflared tunnel run <name>
-		args = []string{"tunnel", "run"}
-		if c.cfg.Name != "" {
-			args = append(args, c.cfg.Name)
-		}
-	case "access":
-		// cloudflared access tcp --url <listener> --hostname <remote>
-		args = []string{"access", "tcp"}
-		if c.cfg.OriginURL != "" {
-			args = append(args, "--url", c.cfg.OriginURL)
-		}
-		if c.cfg.Hostname != "" {
-			args = append(args, "--hostname", c.cfg.Hostname)
-		}
-		if c.cfg.Destination != "" {
-			args = append(args, "--destination", c.cfg.Destination)
-		}
-	default:
-		// "quick" → zero-config tunnel. Uses the --url flag to point at origin.
-		args = []string{"tunnel", "--url", c.cfg.OriginURL}
-	}
-	args = append(args, c.cfg.ExtraArgs...)
-	return args
-}
-
-// watchProcessExit blocks until cmd exits and then signals via the supplied
-// channel. It is used by Start() so the parent can react to a child crash —
-// both before startup completes (the channel is also closed when the startup
-// probe is still pending) and after a successful start (the next supervisor
-// layer can use the same hook to schedule a restart).
-//
-// It also flips the component state to ERROR if the crash happens after the
-// component had reached RUNNING — otherwise the runtime would think the
-// tunnel is still up and serve 5xx until next health-check.
-func (c *CloudflaredComponent) watchProcessExit(cmd *exec.Cmd, exited chan<- struct{}) {
-	if cmd == nil {
-		return
-	}
-	// Reap the process so it doesn't become a zombie. We don't care about
-	// the error here; the callers (Start / Stop) handle success/failure of
-	// teardown themselves.
-	_ = cmd.Wait()
-	close(exited)
-
-	// If Stop() is mid-flight it will reset state to STOPPED. The race is
-	// benign because the second state write to the same field wins; we just
-	// want a crash after Start() returned to be visible to the runtime.
-	c.mu.Lock()
-	if c.state == StateRunning {
-		c.state = StateError
-	}
-	c.mu.Unlock()
-}
-
-func (c *CloudflaredComponent) waitForStartup(ctx context.Context, ready chan<- struct{}) {
-	ticker := time.NewTicker(250 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			// Context was cancelled (e.g. start timeout, or SkyNet asked to give up).
-			// Close the channel so Start()'s select can fall through to the
-			// <-time.After or <-ctx.Done() branch and return a proper error.
-			close(ready)
-			return
-		case <-ticker.C:
-			for _, line := range c.logs.tail(32) {
-				l := strings.ToLower(line)
-				if strings.Contains(l, "registered tunnel") ||
-					strings.Contains(l, "connection") && strings.Contains(l, "registered") ||
-					strings.Contains(l, "connected") ||
-					strings.Contains(l, "ready") {
-					close(ready)
-					return
-				}
-			}
-		}
-	}
-}
-
-// ---- log ring buffer ------------------------------------------------------
-
-// logBuffer is a small ring buffer of lines. It is intentionally lock-free on
-// the write path (writes are single-threaded by the child process' pipes).
-type logBuffer struct {
-	mu   sync.RWMutex
-	lines []string
-	cap  int
-}
-
-func newLogBuffer(cap int) *logBuffer { return &logBuffer{cap: cap} }
-
-func (b *logBuffer) newWriter(tag string) *os.File {
-	// We pipe the child's fd through a goroutine that reads lines.
-	r, w, err := os.Pipe()
-	if err != nil {
-		// Fall back to /dev/null — the sidecar can still function without logs.
-		return os.Stderr
-	}
-	go func() {
-		sc := bufio.NewScanner(r)
-		sc.Buffer(make([]byte, 64*1024), 1024*1024)
-		for sc.Scan() {
-			b.append(sc.Text())
-		}
-		_ = r.Close()
-	}()
-	_ = tag // tag reserved for structured-logging extensions
-	return w
-}
-
-func (b *logBuffer) append(line string) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.lines = append(b.lines, line)
-	if len(b.lines) > b.cap {
-		b.lines = b.lines[len(b.lines)-b.cap:]
-	}
-}
-
-func (b *logBuffer) tail(n int) []string {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-	if n <= 0 || len(b.lines) == 0 {
-		return nil
-	}
-	if n > len(b.lines) {
-		n = len(b.lines)
-	}
-	out := make([]string, n)
-	copy(out, b.lines[len(b.lines)-n:])
-	return out
-}
-
-// FormatLines is a small helper that dumps the most recent log lines as a
-// single pre-formatted string, suitable for embedding into JSON reports.
-func (c *CloudflaredComponent) FormatLogs(n int) string {
-	lines := c.RecentLines(n)
-	if len(lines) == 0 {
+// GetBackendType returns the canonical backend type for inspection
+// (e.g. "cloudflare", "tcp-relay", "skynet-p2p"). Useful for the
+// IPC "status" response and the web UI.
+func (c *CloudflaredComponent) GetBackendType() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.backend == nil {
 		return ""
 	}
-	return strings.Join(lines, "\n")
+	return c.backend.Type()
 }
 
-// Ensure the package compiles even when the config dir is not created at
-// import time. Kept here (instead of in a separate file) for discoverability.
-var _ = filepath.Join
+// GetBackendName returns the human-friendly backend name, e.g.
+// "cloudflare://my-tunnel".
+func (c *CloudflaredComponent) GetBackendName() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.backend == nil {
+		return ""
+	}
+	return c.backend.Name()
+}
+
+// String renders a one-line summary used by the IPC bus and the web UI.
+func (c *CloudflaredComponent) String() string {
+	be := c.GetBackendType()
+	if be == "" {
+		be = "(no backend)"
+	}
+	return c.GetState().String() + " [" + be + "] " + c.GetBackendName()
+}
+
+// Sanity helpers for callers that want to branch on the backend
+// (e.g. the web UI exposes extra stats for tcp-relay). We keep these
+// here so callers do not need to import the tunnel package.
+
+// IsTCPRelay returns true if the configured backend is a TCP relay.
+func (c *CloudflaredComponent) IsTCPRelay() bool { return c.GetBackendType() == tunnel.TypeTCPRelay }
+
+// IsCloudflare returns true for the default cloudflared backend.
+func (c *CloudflaredComponent) IsCloudflare() bool { return c.GetBackendType() == tunnel.TypeCloudflare }
+
+// IsSkyNetP2P returns true for the peer-to-peer backend.
+func (c *CloudflaredComponent) IsSkyNetP2P() bool { return c.GetBackendType() == tunnel.TypeSkyNetP2P }
+
+// IsHTTPProxy returns true for the HTTP CONNECT proxy backend.
+func (c *CloudflaredComponent) IsHTTPProxy() bool { return c.GetBackendType() == tunnel.TypeHTTPProxy }
+
+// IsSOCKS5 returns true for the SOCKS5 proxy backend.
+func (c *CloudflaredComponent) IsSOCKS5() bool { return c.GetBackendType() == tunnel.TypeSOCKS5 }
+
+// IsFailover returns true for the multi-backend failover aggregator.
+func (c *CloudflaredComponent) IsFailover() bool { return c.GetBackendType() == "failover" }
+
+// ---- Component adapter for the embedded web dashboard -----------------
+// These methods exist so the dashboard package can consume a
+// lightweight interface without importing the concrete CloudflaredComponent
+// type.
+
+func (c *CloudflaredComponent) Name() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.cfg.Name == "" {
+		return "cloudflared-sidecar"
+	}
+	return c.cfg.Name
+}
+
+// State returns the human-readable lifecycle state name.
+func (c *CloudflaredComponent) State() string { return c.GetState().String() }
+
+// BackendType returns the backend type name ("cloudflare", "tcp-relay", …).
+// Empty string if Init() has not been called.
+func (c *CloudflaredComponent) BackendType() string { return c.GetBackendType() }
+
+// BackendName returns the backend's Name() for display. Empty string when
+// Init() has not been called.
+func (c *CloudflaredComponent) BackendName() string { return c.GetBackendName() }
+
+// ---- utility -----------------------------------------------------------
+
+// hasPrefix is a tiny helper used by IPC bus handlers to route requests.
+func hasPrefix(s, prefix string) bool { return strings.HasPrefix(s, prefix) }
+
+// ringBuffer is a lightweight concurrent-safe ring buffer of log lines.
+// Cap is bounded by the size supplied to newRingBuffer.
+type ringBuffer struct {
+	mu    sync.RWMutex
+	lines []string
+	cap   int
+}
+
+func newRingBuffer(cap int) *ringBuffer { return &ringBuffer{cap: cap} }
+
+func (r *ringBuffer) append(line string) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lines = append(r.lines, line)
+	if r.cap > 0 && len(r.lines) > r.cap {
+		r.lines = r.lines[len(r.lines)-r.cap:]
+	}
+}
+
+func (r *ringBuffer) tail(n int) []string {
+	if r == nil || n <= 0 {
+		return nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if len(r.lines) == 0 {
+		return nil
+	}
+	if n > len(r.lines) {
+		n = len(r.lines)
+	}
+	out := make([]string, n)
+	copy(out, r.lines[len(r.lines)-n:])
+	return out
+}

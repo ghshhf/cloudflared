@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/cloudflare/cloudflared/sidecar/dashboard"
 	"github.com/cloudflare/cloudflared/sidecar/ipc"
 	"github.com/cloudflare/cloudflared/sidecar/ssi"
 )
@@ -25,6 +26,20 @@ func main() {
 	defer bus.Close()
 
 	comp := ssi.NewCloudflaredComponent()
+
+	// Optional web dashboard: enabled when SIDECAR_DASHBOARD_ADDR is set
+	// (e.g. "127.0.0.1:8080"). Zero value disables the server entirely.
+	dashboardAddr := os.Getenv("SIDECAR_DASHBOARD_ADDR")
+	if dashboardAddr != "" {
+		ds := dashboard.NewServer(dashboardAddr, comp)
+		// Run with a context whose lifetime is the main process.
+		ctx, cancel := context.WithCancel(context.Background())
+		_ = cancel
+		go func() {
+			_ = ds.Start(ctx)
+		}()
+		ipc.DebugLog("sidecar dashboard listening on http://%s", dashboardAddr)
+	}
 
 	// Register the canonical SSI method names so the runtime can address this
 	// sidecar by the standard component contract.

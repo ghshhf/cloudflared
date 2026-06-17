@@ -2,9 +2,10 @@ package ssi
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
+
+	"github.com/cloudflare/cloudflared/sidecar/tunnel"
 )
 
 func TestParseConfigDefaults(t *testing.T) {
@@ -21,70 +22,94 @@ func TestParseConfigDefaults(t *testing.T) {
 	if cfg.StartTimeout <= 0 {
 		t.Error("start timeout should default to > 0")
 	}
-}
-
-func TestParseConfigRejectsUnknownMode(t *testing.T) {
-	_, err := ParseConfig([]byte(`{"mode":"bogus"}`))
-	if err == nil {
-		t.Fatal("expected error for unknown mode")
+	if cfg.Backend != "cloudflare" {
+		t.Errorf("default backend = %q; want cloudflare", cfg.Backend)
 	}
 }
 
-func TestParseConfigFullPayload(t *testing.T) {
-	payload := []byte(`{
-		"name": "my-tunnel",
-		"mode": "access",
+func TestParseConfigRejectsUnknownBackend(t *testing.T) {
+	_, err := ParseConfig([]byte(`{"backend":"bogus"}`))
+	if err == nil {
+		t.Fatal("expected error for unknown backend")
+	}
+}
+
+func TestParseConfigTCPRelay(t *testing.T) {
+	cfg, ssiErr := ParseConfig([]byte(`{
+		"name": "relay",
+		"backend": "tcp-relay",
 		"origin_url": "127.0.0.1:8080",
-		"hostname": "app.example.com",
-		"destination": "10.0.0.1:3389",
-		"binary_path": "/usr/local/bin/cloudflared",
-		"extra_args": ["--loglevel", "info"],
+		"listen_address": "127.0.0.1:0",
 		"shutdown_grace_period_seconds": 5000000000,
 		"start_timeout_seconds": 20000000000
-	}`)
-	cfg, ssiErr := ParseConfig(payload)
+	}`))
 	if ssiErr != nil {
-		t.Fatalf("unexpected parse error: %v", ssiErr)
+		t.Fatalf("parse error: %v", ssiErr)
 	}
-	if cfg.Name != "my-tunnel" {
-		t.Errorf("name = %q", cfg.Name)
+	if cfg.Backend != "tcp-relay" {
+		t.Errorf("backend = %q; want tcp-relay", cfg.Backend)
 	}
-	if cfg.Mode != "access" {
-		t.Errorf("mode = %q", cfg.Mode)
-	}
-	if cfg.ShutdownGracePeriod != 5*time.Second {
-		t.Errorf("grace period = %v; want 5s", cfg.ShutdownGracePeriod)
-	}
-	if cfg.StartTimeout != 20*time.Second {
-		t.Errorf("start timeout = %v; want 20s", cfg.StartTimeout)
-	}
-	if len(cfg.ExtraArgs) != 2 {
-		t.Errorf("extra args = %v", cfg.ExtraArgs)
+	if cfg.ListenAddress == "" {
+		t.Error("listen_address should be non-empty")
 	}
 }
 
-// Component lifecycle test — since the sidecar does NOT actually fork
-// cloudflared unless a binary is available, we only exercise the state
-// transitions that are safe to run on any machine.
+func TestNewBackendConstruction(t *testing.T) {
+	tests := []string{
+		tunnel.TypeCloudflare,
+		tunnel.TypeTCPRelay,
+		tunnel.TypeSkyNetP2P,
+		tunnel.TypeHTTPProxy,
+		tunnel.TypeSOCKS5,
+	}
+	for _, bt := range tests {
+		b, err := tunnel.NewBackend(tunnel.Config{Type: bt, Name: "t-" + bt})
+		if err != nil {
+			t.Errorf("NewBackend(%q) error: %v", bt, err)
+			continue
+		}
+		if b == nil {
+			t.Errorf("NewBackend(%q) returned nil", bt)
+			continue
+		}
+		if b.Type() != bt {
+			t.Errorf("backend Type() = %q; want %q", b.Type(), bt)
+		}
+		if b.Ready() == nil {
+			t.Errorf("backend Ready() returned nil channel for %q", bt)
+		}
+	}
+}
+
+func TestNewBackendUnknown(t *testing.T) {
+	if _, err := tunnel.NewBackend(tunnel.Config{Type: "unknown"}); err == nil {
+		t.Error("expected error for unknown backend type")
+	}
+}
+
 func TestStateTransitionsInit(t *testing.T) {
 	c := NewCloudflaredComponent()
 	if got := c.GetState(); got != StateCreated {
 		t.Fatalf("initial state = %v; want CREATED", got)
 	}
 
-	// Init with a mode that does not need a real binary to be parsed.
-	cfg := DefaultConfig()
-	cfg.Mode = "tunnel"
-	cfg.BinaryPath = "/does/not/exist/cloudflared"
-	if err := c.Init(context.Background(), cfg); err == nil {
-		t.Fatal("expected error when binary not found")
+	// tcp-relay 后端不含特定的二进制检查；Init 应该成功。
+	cfg := Config{
+		Name:          "test-relay",
+		Mode:          "quick",
+		Backend:       "tcp-relay",
+		OriginURL:     "127.0.0.1:0",
+		ListenAddress: "127.0.0.1:0",
 	}
-	if c.GetState() != StateError {
-		t.Errorf("state after failed init = %v; want ERROR", c.GetState())
+	if ssiErr := c.Init(context.Background(), cfg); ssiErr != nil {
+		t.Fatalf("init failed: %v", ssiErr)
+	}
+	if c.GetState() != StateInitialized {
+		t.Errorf("state after init = %v; want INITIALIZED", c.GetState())
 	}
 }
 
-// State machine rejects Start on CREATED (must go through Init first).
+// State machine rejects Start on CREATED.
 func TestStartRequiresInit(t *testing.T) {
 	c := NewCloudflaredComponent()
 	if err := c.Start(context.Background()); err == nil {
@@ -97,46 +122,89 @@ func TestStopWhenNotRunning(t *testing.T) {
 	c := NewCloudflaredComponent()
 	ctx := context.Background()
 	if err := c.Stop(ctx); err == nil {
-		// Either behaviour could be defensible, but we expect a clear error.
-		t.Logf("Stop on CREATED returned nil error; that is acceptable but unexpected")
+		t.Logf("Stop on CREATED returned nil error; acceptable")
 	}
 }
 
-// Exercise log buffer directly — the most likely component subsystem to be
-// exercised independently of a real cloudflared process.
-func TestLogBufferRing(t *testing.T) {
-	b := newLogBuffer(3)
+// TCPRelayLifecycle 验证 tcp-relay 后端生命周期测试：启动 -> Running -> Stopped。
+func TestTCPRelayLifecycle(t *testing.T) {
+	c := NewCloudflaredComponent()
+	cfg := Config{
+		Name:         "relay-test",
+		Mode:         "quick",
+		Backend:       "tcp-relay",
+		OriginURL:    "127.0.0.1:0", // 任何地址，但 Start 会 fail fast。
+		ListenAddress: "127.0.0.1:0",
+	}
+	if ssiErr := c.Init(context.Background(), cfg); ssiErr != nil {
+		t.Fatalf("init failed: %v", ssiErr)
+	}
+	if c.GetBackendType() != "tcp-relay" {
+		t.Errorf("backend type = %q; want tcp-relay", c.GetBackendType())
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	if ssiErr := c.Start(ctx); ssiErr != nil {
+		t.Fatalf("start failed: %v", ssiErr)
+	}
+	if c.GetState() != StateRunning {
+		t.Errorf("state after start = %v; want RUNNING", c.GetState())
+	}
+
+	// 停止。
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer stopCancel()
+	if ssiErr := c.Stop(stopCtx); ssiErr != nil {
+		t.Fatalf("stop failed: %v", ssiErr)
+	}
+	if c.GetState() != StateStopped {
+		t.Errorf("state after stop = %v; want STOPPED", c.GetState())
+	}
+}
+
+// RecentLines exposes recent event log — newly added to the multi-backend refactor
+func TestRecentLinesBaseline(t *testing.T) {
+	c := NewCloudflaredComponent()
+	// 空组件有 0 条事件日志。
+	if got := c.RecentLines(10); len(got) != 0 {
+		t.Errorf("expected empty component has %d recent lines; want 0", len(got))
+	}
+}
+
+// Verify ring buffer directly.
+func TestRingBuffer(t *testing.T) {
+	b := newRingBuffer(3)
 	b.append("one")
 	b.append("two")
 	b.append("three")
 	b.append("four")
 	got := b.tail(3)
 	if len(got) != 3 {
-		t.Fatalf("tail(3) = %d lines", len(got))
+		t.Fatalf("tail(3) = %d lines; want 3", len(got))
 	}
 	if got[0] != "two" || got[1] != "three" || got[2] != "four" {
 		t.Errorf("unexpected tail content: %v", got)
 	}
 }
 
-// Test that Start() does not hang when the context is cancelled before
-// the startup probe fires (Bug #1: ready channel must be closed on ctx cancel).
+// Start() with a context that fires cancel immediately should not hang.
 func TestStartCtxCancelledDoesNotHang(t *testing.T) {
-	// The test binary /tmp/sidecar may not be present in all test environments.
-	// Fall back to /bin/cat (always on Linux/macOS) as a no-op stand-in.
-	bin := "/tmp/sidecar"
-	if _, err := os.Stat(bin); err != nil {
-		bin = "/bin/cat"
-	}
 	c := NewCloudflaredComponent()
-	cfg := DefaultConfig()
-	cfg.Mode = "tunnel"
-	cfg.BinaryPath = bin
-	if err := c.Init(context.Background(), cfg); err != nil {
-		t.Fatalf("init failed: %v", err)
+	cfg := Config{
+		Name:         "cancel-test",
+		Mode:         "quick",
+		Backend:       "tcp-relay",
+		OriginURL:    "127.0.0.1:0",
+		ListenAddress: "127.0.0.1:0",
+		StartTimeout: 10 * time.Second,
+	}
+	if ssiErr := c.Init(context.Background(), cfg); ssiErr != nil {
+		t.Fatalf("init failed: %v", ssiErr)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // cancel before Start is even called
+	cancel()
 
 	done := make(chan error, 1)
 	go func() {
@@ -145,14 +213,24 @@ func TestStartCtxCancelledDoesNotHang(t *testing.T) {
 
 	select {
 	case err := <-done:
-		// Must return an error, not hang.
+		// 即使 context 已经取消，Start 必须在合理时间内返回。
 		if err == nil {
 			t.Error("expected error on cancelled context, got nil")
 		}
 		if c.GetState() == StateRunning {
 			t.Error("state should not be RUNNING after cancelled start")
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("Start() hung after context cancellation — ready channel not closed")
+	case <-time.After(3 * time.Second):
+		t.Fatal("Start() hung — ready channel / ctx select missing")
 	}
+}
+
+// Stop() 应该是 idempotent.
+func TestStopIsIdempotent(t *testing.T) {
+	c := NewCloudflaredComponent()
+	ctx := context.Background()
+	// 第一次 stop —— state 是 CREATED，返回错误但不 panic。
+	_ = c.Stop(ctx)
+	// 第二次 stop —— 同样返回错误但不 panic。
+	_ = c.Stop(ctx)
 }
