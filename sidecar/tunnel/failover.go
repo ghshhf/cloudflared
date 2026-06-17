@@ -7,6 +7,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/cloudflare/cloudflared/sidecar/metrics"
 )
 
 // failoverBackend implements multi-tunnel aggregation with automatic
@@ -67,9 +69,12 @@ func (b *failoverBackend) Start(ctx context.Context) error {
 	// Launch each backend in its own goroutine.
 	errCh := make(chan error, len(b.backends))
 	for i, be := range b.backends {
+		beName := be.Name()
 		go func(idx int, backend Backend) {
 			if err := backend.Start(ctx); err != nil {
 				atomic.StoreInt32(&b.health[idx], 2) // unhealthy
+				metrics.SetAvailable(beName, false)
+				metrics.RecordError("failover")
 				errCh <- err
 				return
 			}
@@ -77,9 +82,12 @@ func (b *failoverBackend) Start(ctx context.Context) error {
 			select {
 			case <-backend.Ready():
 				atomic.StoreInt32(&b.health[idx], 1) // healthy
+				metrics.SetAvailable(beName, true)
+				metrics.SetAvailable("failover", true)
 				errCh <- nil
 			case <-ctx.Done():
 				atomic.StoreInt32(&b.health[idx], 2)
+				metrics.SetAvailable(beName, false)
 				errCh <- ctx.Err()
 			}
 		}(i, be)
@@ -162,21 +170,24 @@ func (b *failoverBackend) promoteNextHealthyIfNeeded(ctx context.Context) {
 	if current < 0 || int(current) >= len(b.backends) {
 		return
 	}
-	// Check if current is still healthy. A backend whose channel is
-	// closed but whose underlying resource is gone is "unhealthy" and
-	// we swap to the next candidate.
+	// Check if current is still healthy.
 	health := atomic.LoadInt32(&b.health[current])
 	if health == 1 {
 		return
 	}
 	// Search for next healthy backend after current (wrapping to start).
-	for offset := 1; offset < len(b.backends); offset++ {
+	for offset := 1; offset <= len(b.backends); offset++ {
 		idx := (int(current) + offset) % len(b.backends)
 		if atomic.LoadInt32(&b.health[idx]) == 1 {
 			atomic.StoreInt32(&b.current, int32(idx))
+			// Record failover event so operators can see it in metrics.
+			metrics.RecordFailover("failover")
+			metrics.RecordFailover(b.backends[idx].Name())
 			return
 		}
 	}
+	// No healthy backend — mark failover aggregate as unavailable.
+	metrics.SetAvailable("failover", false)
 }
 
 // ActiveBackend returns the currently active backend index; -1 if none.

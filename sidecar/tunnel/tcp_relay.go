@@ -7,6 +7,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/cloudflare/cloudflared/sidecar/metrics"
 )
 
 // tcpRelayBackend implements a "poor man's self-hosted tunnel": it
@@ -67,8 +69,10 @@ func (b *tcpRelayBackend) Start(ctx context.Context) error {
 	ln, err := net.Listen("tcp", listenAddr)
 	if err != nil {
 		b.mu.Unlock()
+		metrics.SetAvailable(TypeTCPRelay, false)
 		return err
 	}
+	metrics.SetAvailable(TypeTCPRelay, true)
 	b.listener = ln
 	b.started = true
 	b.mu.Unlock()
@@ -136,27 +140,41 @@ func (b *tcpRelayBackend) acceptLoop(ctx context.Context, ln net.Listener, targe
 // copies data between the two endpoints until either side closes.
 func (b *tcpRelayBackend) handleConn(ctx context.Context, in net.Conn, target string) {
 	dialer := net.Dialer{Timeout: 5 * time.Second}
-	out, err := dialer.DialContext(ctx, "tcp", target)
+
+	var sent, recv int64
+	err := metrics.RecordLatency(TypeTCPRelay, func() error {
+		out, err := dialer.DialContext(ctx, "tcp", target)
+		if err != nil {
+			return err
+		}
+		defer out.Close()
+
+		// Two goroutines for bidirectional copy. Using a channel so we can
+		// return as soon as either side EOFs.
+		var wg sync.WaitGroup
+		var sentCopy, recvCopy int64
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			n, _ := io.Copy(out, in)
+			atomic.AddInt64(&sentCopy, n)
+		}()
+		go func() {
+			defer wg.Done()
+			n, _ := io.Copy(in, out)
+			atomic.AddInt64(&recvCopy, n)
+		}()
+		wg.Wait()
+		atomic.AddInt64(&sent, sentCopy)
+		atomic.AddInt64(&recv, recvCopy)
+		return nil
+	})
+
 	if err != nil {
+		metrics.RecordError(TypeTCPRelay)
 		return
 	}
-	defer out.Close()
-
-	// Two goroutines for bidirectional copy. Using a channel so we can
-	// return as soon as either side EOFs.
-	done := make(chan struct{}, 2)
-	go func() {
-		_, _ = io.Copy(in, out)
-		done <- struct{}{}
-	}()
-	go func() {
-		_, _ = io.Copy(out, in)
-		done <- struct{}{}
-	}()
-	select {
-	case <-done:
-	case <-ctx.Done():
-	}
+	metrics.RecordTransfer(TypeTCPRelay, sent, recv)
 }
 
 func (b *tcpRelayBackend) Stop(ctx context.Context) error {
@@ -171,6 +189,7 @@ func (b *tcpRelayBackend) Stop(ctx context.Context) error {
 	if ln == nil {
 		return nil
 	}
+	metrics.SetAvailable(TypeTCPRelay, false)
 	return ln.Close()
 }
 

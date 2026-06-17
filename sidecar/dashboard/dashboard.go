@@ -23,6 +23,8 @@ import (
 	"html/template"
 	"net/http"
 	"time"
+
+	"github.com/cloudflare/cloudflared/sidecar/metrics"
 )
 
 // Component is the minimal contract we require from the sidecar
@@ -74,6 +76,10 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/api/start", s.startHandler)
 	mux.HandleFunc("/api/stop", s.stopHandler)
 	mux.HandleFunc("/api/logs", s.logsHandler)
+	mux.HandleFunc("/api/stats", s.statsHandler)
+	// Prometheus metrics endpoint — attached from the metrics package directly
+	// so dashboard.go stays decoupled from the metrics implementation.
+	mux.Handle("/metrics", metrics.Handler())
 
 	s.server = &http.Server{
 		Addr:              s.addr,
@@ -155,6 +161,17 @@ func (s *Server) stopHandler(w http.ResponseWriter, r *http.Request) {
 func (s *Server) logsHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"lines": s.component.RecentLines(100)})
+}
+
+// statsHandler returns a live snapshot of all backend metrics.
+// Useful for operators who want to see bytes, latency, and availability
+// without pulling from Prometheus directly.
+func (s *Server) statsHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"backends":   metrics.Default().Stats(),
+		"suggestion": metrics.BestBackend(true), // prefer P2P
+	})
 }
 
 // ---- Templates ------------------------------------------------------------
