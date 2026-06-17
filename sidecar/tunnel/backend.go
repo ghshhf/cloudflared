@@ -290,6 +290,20 @@ func NewBackend(cfg Config) (Backend, error) {
 		return newDNSTunnelBackend(cfg), nil
 	case "icmp-tunnel":
 		return newICMPTunnelBackend(cfg), nil
+	case "ssh-reverse":
+		return newSSHReverseBackend(cfg), nil
+	case "dtls":
+		return newDTLSBackend(cfg), nil
+	case "wireguard":
+		return newWireGuardBackend(cfg), nil
+	case "rtsp":
+		return newRTSPBackend(cfg), nil
+	case "rtmp":
+		return newRTMPBackend(cfg), nil
+	case "sftp":
+		return newSFTPBackend(cfg), nil
+	case "mqtt":
+		return newMQTTBackend(cfg), nil
 
 	default:
 		return nil, errUnknownBackend(cfg.Type)
