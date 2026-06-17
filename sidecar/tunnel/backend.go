@@ -16,6 +16,8 @@ package tunnel
 import (
 	"context"
 	"strings"
+
+	"github.com/cloudflare/cloudflared/sidecar/router"
 )
 
 // Backend is the common interface implemented by every tunnel backend.
@@ -169,6 +171,19 @@ type Config struct {
 	// AccessHostname / Destination are cloudflare-access-mode only.
 	AccessHostname    string `json:"access_hostname,omitempty"`
 	AccessDestination string `json:"access_destination,omitempty"`
+
+	// --- smart-router / failover specific ---
+
+	// RoutingMode selects the routing strategy.
+	// Values: "failover" (default), "round-robin", "latency", "sticky", "p2p-first".
+	RoutingMode string `json:"routing_mode,omitempty"`
+
+	// PreferP2P causes the router to always prefer P2P backends when healthy.
+	PreferP2P bool `json:"prefer_p2p,omitempty"`
+
+	// RoutingRules is a JSON array of routing rules for the smart-router.
+	// Each rule: {dest: "10.0.0.0/8", proto: "tcp", backend: "skynet-p2p", priority: 100}
+	RoutingRules []string `json:"routing_rules,omitempty"`
 }
 
 // NewBackend is the backend registry: given a Config it returns a
@@ -204,7 +219,6 @@ func NewBackend(cfg Config) (Backend, error) {
 		for _, t := range childTypes {
 			childCfg := cfg
 			childCfg.Type = t
-			// Each child has a short name so its logs are distinguishable.
 			childCfg.Name = cfg.Name + "-" + t
 			child, err := NewBackend(childCfg)
 			if err != nil {
@@ -213,6 +227,38 @@ func NewBackend(cfg Config) (Backend, error) {
 			children = append(children, child)
 		}
 		return newFailoverBackend(cfg, children...), nil
+
+	case "smart-router":
+		// Smart-router is configured via cfg.RoutingRules (JSON array of rules)
+		// and cfg.RoutingMode (failover | round-robin | latency | sticky | p2p-first).
+		// Its child backends are declared in cfg.ExtraArgs (same format as failover).
+		routerCfg := router.Config{
+			Mode:      router.Mode(cfg.RoutingMode),
+			PreferP2P: cfg.PreferP2P,
+		}
+		var childTypes []string
+		if len(cfg.ExtraArgs) > 0 {
+			childTypes = parseBackendList(strings.Join(cfg.ExtraArgs, ","))
+		}
+		if len(childTypes) == 0 {
+			childTypes = []string{TypeCloudflare, TypeSkyNetP2P, TypeTCPRelay}
+		}
+		r, err := router.New(routerCfg)
+		if err != nil {
+			return nil, err
+		}
+		for _, t := range childTypes {
+			childCfg := cfg
+			childCfg.Type = t
+			childCfg.Name = cfg.Name + "-" + t
+			child, err := NewBackend(childCfg)
+			if err != nil {
+				return nil, err
+			}
+			r.RegisterBackend(t, child)
+		}
+		return r, nil
+
 	default:
 		return nil, errUnknownBackend(cfg.Type)
 	}
