@@ -192,6 +192,10 @@ type Config struct {
 	// Servers is a list of server addresses used by backends that need external
 	// discovery (STUN for WebRTC, TURN for relay, etc.).
 	Servers []string `json:"servers,omitempty"`
+
+	// TunnelDomain is the DNS domain used for DNS tunnel.
+	// Subdomains of this domain carry tunneled data.
+	TunnelDomain string `json:"tunnel_domain,omitempty"`
 }
 
 // NewBackend is the backend registry: given a Config it returns a
@@ -282,6 +286,10 @@ func NewBackend(cfg Config) (Backend, error) {
 		}), nil
 	case "quic":
 		return newQUICBackend(cfg), nil
+	case "dns-tunnel":
+		return newDNSTunnelBackend(cfg), nil
+	case "icmp-tunnel":
+		return newICMPTunnelBackend(cfg), nil
 
 	default:
 		return nil, errUnknownBackend(cfg.Type)
