@@ -21,6 +21,10 @@ import (
 	"github.com/cloudflare/cloudflared/sidecar/ssi"
 )
 
+// Version is injected at build time. See Makefile for ldflags.
+// "dev" when built locally without ldflags.
+var Version = "dev"
+
 func main() {
 	bus := ipc.NewBus(os.Stdin, os.Stdout)
 	defer bus.Close()
@@ -32,6 +36,14 @@ func main() {
 	dashboardAddr := os.Getenv("SIDECAR_DASHBOARD_ADDR")
 	if dashboardAddr != "" {
 		ds := dashboard.NewServer(dashboardAddr, comp)
+		// Pass version string for display.
+		ds.SetVersion(Version)
+		// Read optional dashboard auth token from env.
+		if token := os.Getenv("SIDECAR_DASHBOARD_TOKEN"); token != "" {
+			ds.SetAuthToken(token)
+		}
+		// Wire proxy pool provider if the backend supports it.
+		ds.SetPoolStatsProvider(comp)
 		// Run with a context whose lifetime is the main process.
 		ctx, cancel := context.WithCancel(context.Background())
 		_ = cancel

@@ -20,6 +20,22 @@ import (
 )
 
 // wireGuardBackend implements WireGuard Noise IK + ChaCha20-Poly1305 over UDP.
+//
+// Capabilities:
+//   - X25519 ECDH key exchange (static + ephemeral)
+//   - Noise IK handshake (initiator + responder)
+//   - MAC1 message authentication
+//   - Transport data encryption/decryption with XChaCha20-Poly1305
+//
+// Limitations (production gaps):
+//   - Decrypted transport packets are dropped (no TUN interface to forward them).
+//     Full tunneling requires a virtual TUN device or a userspace IP stack.
+//   - No session rekeying (WireGuard spec requires periodic rekey every 120s).
+//   - No cookie reply / DoS resistance (MAC2).
+//   - Single peer only.
+//   - No allowed IPs filtering during handshake.
+//   - Persistent keepalive sends encrypted empty frames (correct) but the
+//     transport layer to receive and process responses is minimal.
 type wireGuardBackend struct {
 	name   string
 	cfg    wgConfig
@@ -249,11 +265,7 @@ func (b *wireGuardBackend) initiateHandshake() {
 		b.recordError()
 		return
 	}
-	// In WireGuard, the ephemeral public key is derived from the private key
-	// via Curve25519 scalar multiplication. We use a simplified approach:
-	// just use random bytes as the ephemeral pub (in real WireGuard, this is derived)
-	// For accurate WireGuard, we'd need curve25519.ScalarBaseMult
-	// But since we use ecdh.X25519, we need to convert:
+	// Derive ephemeral public key via X25519 scalar multiplication.
 	ephemPrivKey, err := ecdh.X25519().NewPrivateKey(ephemPriv)
 	if err != nil {
 		b.recordError()

@@ -60,6 +60,8 @@ const (
 	ModeSticky Mode = "sticky"
 	// ModeP2PFirst tries P2P backends first, falls back to others.
 	ModeP2PFirst Mode = "p2p-first"
+	// ModeProxyFirst tries proxy-pool backends first, falls back to others.
+	ModeProxyFirst Mode = "proxy-first"
 )
 
 // ---- Route rule ----------------------------------------------------------
@@ -134,7 +136,7 @@ func (c Config) Validate() error {
 		c.Mode = ModeP2PFirst
 	}
 	switch c.Mode {
-	case ModeFailover, ModeRoundRobin, ModeLatency, ModeSticky, ModeP2PFirst:
+	case ModeFailover, ModeRoundRobin, ModeLatency, ModeSticky, ModeP2PFirst, ModeProxyFirst:
 	default:
 		return fmt.Errorf("router: unknown mode %q", c.Mode)
 	}
@@ -303,6 +305,8 @@ func (r *SmartRouter) bestByModeLocked() string {
 	switch r.cfg.Mode {
 	case ModeP2PFirst:
 		return r.bestP2PLocked()
+	case ModeProxyFirst:
+		return r.bestProxyFirstLocked()
 	case ModeLatency:
 		return r.bestLatencyLocked()
 	case ModeSticky:
@@ -416,9 +420,9 @@ func (r *SmartRouter) Stats() map[string]any {
 	ruleList := make([]map[string]any, len(r.rules))
 	for i, rule := range r.rules {
 		ruleList[i] = map[string]any{
-			"dest":    rule.Dest,
-			"proto":   rule.Proto,
-			"backend": rule.Backend,
+			"dest":     rule.Dest,
+			"proto":    rule.Proto,
+			"backend":  rule.Backend,
 			"priority": rule.Priority,
 		}
 	}
@@ -427,11 +431,30 @@ func (r *SmartRouter) Stats() map[string]any {
 		beNames = append(beNames, name)
 	}
 	sort.Strings(beNames)
+
+	// Categorise backends by role.
+	tunnelBEs := make([]string, 0)
+	proxyBEs := make([]string, 0)
+	p2pBEs := make([]string, 0)
+	for _, n := range beNames {
+		switch {
+		case isProxy(n):
+			proxyBEs = append(proxyBEs, n)
+		case isP2P(n):
+			p2pBEs = append(p2pBEs, n)
+		default:
+			tunnelBEs = append(tunnelBEs, n)
+		}
+	}
+
 	return map[string]any{
-		"mode":     r.cfg.Mode,
-		"prefer_p2p": r.cfg.PreferP2P,
-		"rules":    ruleList,
-		"backends": beNames,
+		"mode":            r.cfg.Mode,
+		"prefer_p2p":      r.cfg.PreferP2P,
+		"rules":           ruleList,
+		"backends":        beNames,
+		"tunnel_backends": tunnelBEs,
+		"proxy_backends":  proxyBEs,
+		"p2p_backends":    p2pBEs,
 	}
 }
 
@@ -443,6 +466,23 @@ func isP2P(name string) bool {
 		strings.Contains(name, "p2p") ||
 		strings.Contains(name, "dht") ||
 		strings.Contains(name, "webrtc")
+}
+
+// isProxy reports true for backends that provide proxy pool / gateway service.
+func isProxy(name string) bool {
+	return name == "proxy-pool" ||
+		strings.Contains(name, "proxy")
+}
+
+// bestProxyFirstLocked returns the first healthy proxy backend, else falls
+// back to the best latency backend.
+func (r *SmartRouter) bestProxyFirstLocked() string {
+	for name := range r.backends {
+		if isProxy(name) && metrics.Default().ForBackend(name).Available.Value() == 1 {
+			return name
+		}
+	}
+	return r.bestLatencyLocked()
 }
 
 func normalizeProto(proto string) string {

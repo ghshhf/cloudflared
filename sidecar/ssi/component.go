@@ -331,6 +331,23 @@ func (c *CloudflaredComponent) BackendType() string { return c.GetBackendType() 
 // Init() has not been called.
 func (c *CloudflaredComponent) BackendName() string { return c.GetBackendName() }
 
+// PoolStats returns proxy pool statistics if the active backend is a proxy-pool.
+// Returns nil when the backend is not a proxy-pool or when Init() has not been
+// called. Implements the dashboard.PoolStatsProvider interface.
+func (c *CloudflaredComponent) PoolStats() map[string]any {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.backend == nil || c.backend.Type() != tunnel.TypeProxyPool {
+		return nil
+	}
+	// The proxyPoolBackend has a PoolStats() method; access it via interface.
+	type poolStatser interface{ PoolStats() map[string]any }
+	if ps, ok := c.backend.(poolStatser); ok {
+		return ps.PoolStats()
+	}
+	return nil
+}
+
 // ---- utility -----------------------------------------------------------
 
 // hasPrefix is a tiny helper used by IPC bus handlers to route requests.

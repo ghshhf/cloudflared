@@ -198,7 +198,7 @@ func ParseConfig(payload json.RawMessage) (Config, *SsiError) {
 		default:
 			return cfg, &SsiError{Code: ErrConfigInvalid, Message: "unknown mode: " + cfg.Mode}
 		}
-	case "tcp-relay", "skynet-p2p", "http-proxy", "socks5", "failover", "smart-router":
+	case "tcp-relay", "skynet-p2p", "http-proxy", "socks5", "failover", "smart-router", "proxy-pool":
 		// Non-cloudflare backends don't need a mode.
 	default:
 		return cfg, &SsiError{Code: ErrConfigInvalid, Message: "unknown backend: " + cfg.Backend}

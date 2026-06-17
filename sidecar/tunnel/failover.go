@@ -18,12 +18,17 @@ import (
 // Example topology:
 //
 //   backends[0] = cloudflare tunnel (primary, high reliability)
-//   backends[1] = skynet-p2p (fallback, direct peer connection)
+//   backends[1] = proxy-pool (fallback, free proxy pool)
 //   backends[2] = tcp relay (last-resort, self-hosted)
 //
 // On Start, all backends are launched concurrently. Traffic always goes
 // through the front-most healthy backend; when a backend is marked
 // unhealthy, the next one takes over.
+//
+// Degraded mode: when the active backend is NOT the primary (index 0),
+// the failover aggregate is considered "degraded". This is visible via
+// IsDegraded() and in metrics. Degraded mode is cleared when the primary
+// backend recovers.
 type failoverBackend struct {
 	cfg       Config
 	backends  []Backend
@@ -38,6 +43,9 @@ type failoverBackend struct {
 	// health tracks per-backend health status (0 = unknown,
 	// 1 = healthy, 2 = unhealthy).
 	health []int32
+
+	// degraded is true when a non-primary backend is active.
+	degraded int32 // atomic bool (0 = false, 1 = true)
 
 	// acceptListener is only set when the aggregate backends are
 	// TCP-listening (TCPRelay, HTTP proxy, SOCKS5).
@@ -173,6 +181,11 @@ func (b *failoverBackend) promoteNextHealthyIfNeeded(ctx context.Context) {
 	// Check if current is still healthy.
 	health := atomic.LoadInt32(&b.health[current])
 	if health == 1 {
+		// Primary recovered — clear degraded.
+		if current == 0 && atomic.LoadInt32(&b.degraded) == 1 {
+			atomic.StoreInt32(&b.degraded, 0)
+			metrics.SetAvailable("failover-degraded", false)
+		}
 		return
 	}
 	// Search for next healthy backend after current (wrapping to start).
@@ -180,9 +193,14 @@ func (b *failoverBackend) promoteNextHealthyIfNeeded(ctx context.Context) {
 		idx := (int(current) + offset) % len(b.backends)
 		if atomic.LoadInt32(&b.health[idx]) == 1 {
 			atomic.StoreInt32(&b.current, int32(idx))
-			// Record failover event so operators can see it in metrics.
-			metrics.RecordFailover("failover")
-			metrics.RecordFailover(b.backends[idx].Name())
+			// Mark degraded if switched to a non-primary backend.
+			if idx != 0 {
+				atomic.StoreInt32(&b.degraded, 1)
+				metrics.SetAvailable("failover-degraded", true)
+				// Notify via metrics which fallback is active.
+				metrics.RecordFailover("failover")
+				metrics.RecordFailover(b.backends[idx].Name())
+			}
 			return
 		}
 	}
@@ -197,6 +215,11 @@ func (b *failoverBackend) ActiveBackend() int {
 		return -1
 	}
 	return int(active)
+}
+
+// IsDegraded returns true when a non-primary backend is active.
+func (b *failoverBackend) IsDegraded() bool {
+	return atomic.LoadInt32(&b.degraded) == 1
 }
 
 // Stop stops all child backends in parallel.
@@ -234,7 +257,11 @@ func (b *failoverBackend) HealthStatus() []string {
 			marker = "DOWN"
 		}
 		if int(atomic.LoadInt32(&b.current)) == i {
-			marker = "*" + marker
+			if i == 0 {
+				marker = "*" + marker
+			} else {
+				marker = "*DEGRADED(" + marker + ")"
+			}
 		}
 		out[i] = fmt.Sprintf("[%s] %s", marker, be.Name())
 	}

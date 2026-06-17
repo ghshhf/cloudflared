@@ -44,11 +44,20 @@ type Backend interface {
 	Type() string
 }
 
+// PoolStatsProvider is an optional interface the component can implement
+// to provide proxy pool statistics for the dashboard.
+type PoolStatsProvider interface {
+	PoolStats() map[string]any
+}
+
 // Server wraps an http.Server along with the component so the
 // dashboard can render its state.
 type Server struct {
 	addr      string
 	component Component
+	pool      PoolStatsProvider
+	version   string
+	authToken string
 
 	server *http.Server
 	done   chan struct{}
@@ -59,6 +68,17 @@ type Server struct {
 func NewServer(addr string, comp Component) *Server {
 	return &Server{addr: addr, component: comp, done: make(chan struct{})}
 }
+
+// SetVersion sets the sidecar version for display on the dashboard.
+func (s *Server) SetVersion(v string) { s.version = v }
+
+// SetAuthToken enables token-based auth for all /api/* endpoints.
+// When set, clients must pass Header: Authorization: Bearer <token>.
+func (s *Server) SetAuthToken(token string) { s.authToken = token }
+
+// SetPoolStatsProvider registers a proxy pool stats provider. Must be
+// called before Start() to take effect.
+func (s *Server) SetPoolStatsProvider(p PoolStatsProvider) { s.pool = p }
 
 // IsEnabled reports whether the server has an address and will serve
 // on Start().
@@ -72,14 +92,15 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.indexHandler)
-	mux.HandleFunc("/api/status", s.statusHandler)
-	mux.HandleFunc("/api/start", s.startHandler)
-	mux.HandleFunc("/api/stop", s.stopHandler)
-	mux.HandleFunc("/api/logs", s.logsHandler)
-	mux.HandleFunc("/api/stats", s.statsHandler)
+	mux.HandleFunc("/api/status", s.requireAuth(s.statusHandler))
+	mux.HandleFunc("/api/start", s.requireAuth(s.startHandler))
+	mux.HandleFunc("/api/stop", s.requireAuth(s.stopHandler))
+	mux.HandleFunc("/api/logs", s.requireAuth(s.logsHandler))
+	mux.HandleFunc("/api/stats", s.requireAuth(s.statsHandler))
+	mux.HandleFunc("/api/pool", s.requireAuth(s.poolHandler))
 	// Prometheus metrics endpoint — attached from the metrics package directly
 	// so dashboard.go stays decoupled from the metrics implementation.
-	mux.Handle("/metrics", metrics.Handler())
+	mux.Handle("/metrics", s.requireAuth(metrics.Handler().ServeHTTP))
 
 	s.server = &http.Server{
 		Addr:              s.addr,
@@ -105,6 +126,24 @@ func (s *Server) Start(ctx context.Context) error {
 	return nil
 }
 
+// ---- Auth middleware -------------------------------------------------------
+
+// requireAuth wraps a handler with token-based authentication.
+// If no token is configured, the handler is passed through as-is.
+func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
+	if s.authToken == "" {
+		return next
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		if auth != "Bearer "+s.authToken {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next(w, r)
+	}
+}
+
 // ---- Handlers -------------------------------------------------------------
 
 func (s *Server) indexHandler(w http.ResponseWriter, r *http.Request) {
@@ -113,12 +152,13 @@ func (s *Server) indexHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data := map[string]any{
-		"name":      s.component.Name(),
-		"state":     s.component.State(),
-		"backend":   s.component.BackendType(),
+		"name":        s.component.Name(),
+		"version":     s.version,
+		"state":       s.component.State(),
+		"backend":     s.component.BackendType(),
 		"backend_name": s.component.BackendName(),
-		"lines":     s.component.RecentLines(32),
-		"now":       time.Now().UTC().Format(time.RFC3339),
+		"lines":       s.component.RecentLines(32),
+		"now":         time.Now().UTC().Format(time.RFC3339),
 	}
 	if err := indexTmpl.Execute(w, data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -174,6 +214,19 @@ func (s *Server) statsHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// poolHandler returns proxy pool statistics if a pool provider is registered.
+func (s *Server) poolHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if s.pool == nil {
+		_ = json.NewEncoder(w).Encode(map[string]any{"pool": nil, "status": "no proxy pool backend"})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"pool":   s.pool.PoolStats(),
+		"status": "ok",
+	})
+}
+
 // ---- Templates ------------------------------------------------------------
 
 // indexTmpl is the HTML for the root dashboard page. Kept inline so we
@@ -199,7 +252,7 @@ pre{background:#111;color:#eee;padding:12px;border-radius:6px;font-size:12px;ove
 </head>
 <body>
 <div class="card">
-<h1>{{.name}} <span class="badge {{if eq .state "RUNNING"}}ok{{else}}other{{end}}">{{.state}}</span></h1>
+<h1>{{.name}} <span class="badge {{if eq .state "RUNNING"}}ok{{else}}other{{end}}">{{.state}}</span> <span class="meta">v{{.version}}</span></h1>
 <div class="row"><span class="meta">Backend:</span> <code>{{.backend}}</code></div>
 <div class="row"><span class="meta">Origin:</span> <code>{{.backend_name}}</code></div>
 <div class="row"><span class="meta">Snapshot time:</span> <code>{{.now}} UTC</code></div>
@@ -209,6 +262,18 @@ pre{background:#111;color:#eee;padding:12px;border-radius:6px;font-size:12px;ove
 <pre>{{range .lines}}{{.}}
 {{end}}</pre>
 </div>
+<div class="card" id="pool-panel" style="display:none">
+<h2>Proxy Pool <span id="pool-alive" class="badge other">0</span></h2>
+<div id="pool-details"></div>
+<div id="pool-updated" class="meta"></div>
+</div>
+<script>
+async function fetchPool(){try{let r=await fetch('/api/pool'),d=await r.json();if(!d.pool){document.getElementById('pool-panel').style.display='none';return}
+document.getElementById('pool-panel').style.display='';let p=d.pool;document.getElementById('pool-alive').textContent=p.alive||0;document.getElementById('pool-alive').className='badge '+(p.alive>0?'ok':'err');let h='';if(p.protocols){h+='<div class="row"><span class="meta">Protocols:</span></div>';for(let[k,v]of Object.entries(p.protocols)){h+='<div class="row" style="margin-left:16px"><code>'+k+'</code><span class="meta">'+v+' nodes</span></div>'}}
+h+='<div class="row"><span class="meta">Fetched:</span><code>'+(p.total_fetched||0)+'</code></div>';h+='<div class="row"><span class="meta">Valid:</span><code>'+(p.total_valid||0)+'</code></div>';h+='<div class="row"><span class="meta">Expired:</span><code>'+(p.total_expired||0)+'</code></div>';document.getElementById('pool-details').innerHTML=h;document.getElementById('pool-updated').textContent='Last refresh: '+new Date().toISOString()}catch(e){}
+setTimeout(fetchPool,5000)}
+fetchPool()
+</script>
 <div class="card">
 <h2>HTTP API</h2>
 <pre>GET  /api/status  → JSON snapshot

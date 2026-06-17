@@ -72,6 +72,7 @@ const (
 	TypeHTTPProxy  = "http-proxy" // local HTTP CONNECT proxy over tunnel
 	TypeSOCKS5     = "socks5"     // local SOCKS5 proxy over tunnel
 	TypeFailover   = "failover"   // aggregate of backends, auto-failover
+	TypeProxyPool  = "proxy-pool" // dynamic free proxy pool from subscription sources
 )
 
 // ---- configuration helpers --------------------------------------------
@@ -239,6 +240,9 @@ func NewBackend(cfg Config) (Backend, error) {
 			children = append(children, child)
 		}
 		return newFailoverBackend(cfg, children...), nil
+
+	case TypeProxyPool:
+		return newProxyPoolBackend(cfg), nil
 
 	case "smart-router":
 		// Smart-router is configured via cfg.RoutingRules (JSON array of rules)
