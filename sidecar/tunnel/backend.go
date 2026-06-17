@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/cloudflare/cloudflared/sidecar/router"
+	"github.com/cloudflare/cloudflared/sidecar/webrtc"
 )
 
 // Backend is the common interface implemented by every tunnel backend.
@@ -187,6 +188,10 @@ type Config struct {
 
 	// GREKey is the GRE key used for GRE and packet-tunnel backends.
 	GREKey uint32 `json:"gre_key,omitempty"`
+
+	// Servers is a list of server addresses used by backends that need external
+	// discovery (STUN for WebRTC, TURN for relay, etc.).
+	Servers []string `json:"servers,omitempty"`
 }
 
 // NewBackend is the backend registry: given a Config it returns a
@@ -268,6 +273,15 @@ func NewBackend(cfg Config) (Backend, error) {
 		return newPacketTunnelBackend(cfg), nil
 	case "udp-tunnel":
 		return newUDPTunnelBackend(cfg), nil
+	case "webrtc":
+		return webrtc.NewWebRTCBackend(webrtc.STUNConfig{
+			ListenAddr:  cfg.ListenAddress,
+			STUNServers: cfg.Servers,
+			Label:       cfg.Name,
+			ProtocolID:  cfg.SkyNetProtocolName,
+		}), nil
+	case "quic":
+		return newQUICBackend(cfg), nil
 
 	default:
 		return nil, errUnknownBackend(cfg.Type)
