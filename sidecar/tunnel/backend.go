@@ -184,6 +184,9 @@ type Config struct {
 	// RoutingRules is a JSON array of routing rules for the smart-router.
 	// Each rule: {dest: "10.0.0.0/8", proto: "tcp", backend: "skynet-p2p", priority: 100}
 	RoutingRules []string `json:"routing_rules,omitempty"`
+
+	// GREKey is the GRE key used for GRE and packet-tunnel backends.
+	GREKey uint32 `json:"gre_key,omitempty"`
 }
 
 // NewBackend is the backend registry: given a Config it returns a
@@ -258,6 +261,13 @@ func NewBackend(cfg Config) (Backend, error) {
 			r.RegisterBackend(t, child)
 		}
 		return r, nil
+
+	case "gre":
+		return newGREBackend(cfg), nil
+	case "packet-tunnel":
+		return newPacketTunnelBackend(cfg), nil
+	case "udp-tunnel":
+		return newUDPTunnelBackend(cfg), nil
 
 	default:
 		return nil, errUnknownBackend(cfg.Type)
