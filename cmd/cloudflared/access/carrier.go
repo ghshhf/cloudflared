@@ -125,7 +125,17 @@ func ssh(c *cli.Context) error {
 			return errors.Wrap(err, "error validating origin URL")
 		}
 		log.Info().Str(LogFieldHost, forwarder.Host).Msg("Start Websocket listener")
+		// Write the pidfile before starting the long-running forwarder so callers
+		// can monitor the process via the pidfile while the tunnel is up.
+		if c.IsSet(pidfileFlag) {
+			writeAccessPidFile(c.String(pidfileFlag), log)
+		}
 		err = carrier.StartForwarder(wsConn, forwarder.Host, shutdownC, options)
+		// Remove the pidfile once the forwarder returns so the file only
+		// exists while the process is actively proxying.
+		if c.IsSet(pidfileFlag) {
+			removeAccessPidFile(c.String(pidfileFlag), log)
+		}
 		if err != nil {
 			log.Err(err).Msg("Error on Websocket listener")
 		}

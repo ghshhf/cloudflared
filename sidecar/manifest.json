@@ -1,0 +1,77 @@
+{
+  "format_version": "swbn-1.0",
+  "name": "cloudflared-tunnel",
+  "vendor": "skynet-contrib",
+  "version": "0.2.0",
+  "description": "SkyNet SSI component that wraps the native cloudflared binary to expose Cloudflare's global edge as a managed tunnel. Enhanced version with process crash detection, panic isolation, DoS protection, and graceful shutdown.",
+  "category": "networking/tunnel",
+  "license": "Apache-2.0",
+  "runtime": {
+    "type": "native",
+    "entrypoint": "sidecar${exe}",
+    "ipc": "stdio-jsonrpc",
+    "required_binary": "bin/cloudflared${exe}"
+  },
+  "interfaces": {
+    "lifecycle": {
+      "init": {
+        "config": {
+          "type": "object",
+          "properties": {
+            "name":         { "type": "string", "default": "cloudflared-default" },
+            "mode":         { "type": "string", "enum": ["quick", "tunnel", "access"], "default": "quick" },
+            "origin_url":   { "type": "string" },
+            "hostname":     { "type": "string" },
+            "destination":  { "type": "string" },
+            "binary_path":  { "type": "string" },
+            "extra_args":   { "type": "array", "items": { "type": "string" } },
+            "shutdown_grace_period_seconds": { "type": "number", "default": 15 },
+            "start_timeout_seconds":         { "type": "number", "default": 30 }
+          }
+        }
+      },
+      "start":  {},
+      "stop":   {},
+      "pause":  {},
+      "resume": {},
+      "get_state": {},
+      "get_logs": {
+        "params": {
+          "n": { "type": "integer", "default": 64, "description": "number of recent log lines to return" }
+        }
+      },
+      "ping": {}
+    },
+    "notifications": {
+      "state_changed": {
+        "params": {
+          "state":      { "type": "string", "enum": ["CREATED","INITIALIZING","INITIALIZED","STARTING","RUNNING","PAUSING","PAUSED","RESUMING","STOPPING","STOPPED","ERROR"] },
+          "state_code": { "type": "integer" },
+          "at":         { "type": "string" }
+        }
+      }
+    }
+  },
+  "security_model": {
+    "sandbox": "none",
+    "required_permissions": [
+      "network.outbound",
+      "process.spawn"
+    ]
+  },
+  "metadata": {
+    "upstream": "https://github.com/cloudflare/cloudflared",
+    "notes": "This component does NOT re-compile cloudflared to WASM. It wraps the official cloudflared binary so the SkyNet runtime can manage tunnel instances through the standard SSI lifecycle interface. This enhanced version (v0.2.0) adds: (1) automatic process crash detection via watcher goroutine, (2) panic isolation in JSON-RPC handlers, (3) DoS protection via bounded semaphore (100 concurrent requests), (4) graceful SIGINT/SIGTERM shutdown with final state notification flush, (5) corrected config hash that includes IsFedramp and Headers fields."
+  },
+  "enhancements": {
+    "v0.2.0": [
+      "watchProcessExit goroutine: process crash auto-detected, state flips to ERROR within one heartbeat cycle",
+      "Panic isolation: handler panics do not kill the sidecar process",
+      "DoS protection: max 100 concurrent request goroutines via semaphore",
+      "Graceful shutdown: SIGINT/SIGTERM flushes final state_changed notification before exit",
+      "Corrected Forwarder.Hash() to include IsFedramp and Headers fields",
+      "Fixed mustInitRespMetaHeader panic -> error return pattern",
+      "Fixed namedTunnel nil-check ordering preventing goroutine leaks"
+    ]
+  }
+}

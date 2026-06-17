@@ -8,12 +8,13 @@ import (
 
 // Forwarder represents a client side listener to forward traffic to the edge
 type Forwarder struct {
-	URL           string `json:"url"`
-	Listener      string `json:"listener"`
-	TokenClientID string `json:"service_token_id" yaml:"serviceTokenID"`
-	TokenSecret   string `json:"secret_token_id" yaml:"serviceTokenSecret"`
-	Destination   string `json:"destination"`
-	IsFedramp     bool   `json:"is_fedramp" yaml:"isFedramp"`
+	URL           string   `json:"url"`
+	Listener      string   `json:"listener"`
+	TokenClientID string   `json:"service_token_id" yaml:"serviceTokenID"`
+	TokenSecret   string   `json:"secret_token_id" yaml:"serviceTokenSecret"`
+	Destination   string   `json:"destination"`
+	IsFedramp     bool     `json:"is_fedramp" yaml:"isFedramp"`
+	Headers       []string `json:"headers,omitempty" yaml:"headers,omitempty"`
 }
 
 // Tunnel represents a tunnel that should be started
@@ -40,5 +41,11 @@ func (f *Forwarder) Hash() string {
 	_, _ = io.WriteString(h, f.TokenClientID)
 	_, _ = io.WriteString(h, f.TokenSecret)
 	_, _ = io.WriteString(h, f.Destination)
+	_, _ = io.WriteString(h, fmt.Sprintf("%t", f.IsFedramp))
+	// Include custom headers so that adding/removing/modifying them in the
+	// configuration triggers a tunnel restart.
+	for _, header := range f.Headers {
+		_, _ = io.WriteString(h, header)
+	}
 	return fmt.Sprintf("%x", h.Sum(nil))
 }

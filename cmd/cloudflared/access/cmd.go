@@ -7,11 +7,13 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"text/template"
 	"time"
 
 	"github.com/getsentry/sentry-go"
+	"github.com/mitchellh/go-homedir"
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog"
 	"github.com/urfave/cli/v2"
@@ -52,6 +54,7 @@ Host {{.Hostname}}
 {{end}}
 `
 	fedrampFlag = "fedramp"
+	pidfileFlag = "pidfile"
 )
 
 const sentryDSN = "https://56a9c9fa5c364ab28f34b14f35ea0f1b@sentry.io/189878"
@@ -72,6 +75,18 @@ func Flags() []cli.Flag {
 	return []cli.Flag{} // no flags yet.
 }
 
+// accessFlags returns the flags that apply to the top-level "access" subcommand
+// (e.g. --pidfile) and are inherited by its subcommands such as "access tcp".
+func accessFlags() []cli.Flag {
+	return []cli.Flag{
+		&cli.StringFlag{
+			Name:    pidfileFlag,
+			Usage:   "Write the application's PID to this file. The file is removed when the process exits.",
+			EnvVars: []string{"TUNNEL_PIDFILE"},
+		},
+	}
+}
+
 // Commands returns all the Access related subcommands
 func Commands() []*cli.Command {
 	return []*cli.Command{
@@ -80,10 +95,10 @@ func Commands() []*cli.Command {
 			Aliases:  []string{"forward"},
 			Category: "Access",
 			Usage:    "access <subcommand>",
-			Flags: []cli.Flag{&cli.BoolFlag{
+			Flags: append([]cli.Flag{&cli.BoolFlag{
 				Name:  fedrampFlag,
 				Usage: "use when performing operations in fedramp account",
-			}},
+			}}, accessFlags()...),
 			Description: `Cloudflare Access protects internal resources by securing, authenticating and monitoring access
 			per-user and by application. With Cloudflare Access, only authenticated users with the required permissions are
 			able to reach sensitive resources. The commands provided here allow you to interact with Access protected
@@ -146,13 +161,12 @@ func Commands() []*cli.Command {
 					Usage:       "",
 					ArgsUsage:   "",
 					Description: `The tcp subcommand sends data over a proxy to the Cloudflare edge.`,
-					Flags: []cli.Flag{
-						&cli.StringFlag{
-							Name:    sshHostnameFlag,
-							Aliases: []string{"tunnel-host", "T"},
-							Usage:   "specify the hostname of your application.",
-							EnvVars: []string{"TUNNEL_SERVICE_HOSTNAME"},
-						},
+					Flags: append([]cli.Flag{&cli.StringFlag{
+						Name:    sshHostnameFlag,
+						Aliases: []string{"tunnel-host", "T"},
+						Usage:   "specify the hostname of your application.",
+						EnvVars: []string{"TUNNEL_SERVICE_HOSTNAME"},
+					},
 						&cli.StringFlag{
 							Name:    sshDestinationFlag,
 							Usage:   "specify the destination address of your SSH server.",
@@ -204,7 +218,7 @@ func Commands() []*cli.Command {
 							Hidden: true,
 							Usage:  "Writes up-to the max provided stream payloads to the logger as debug statements.",
 						},
-					},
+					}, accessFlags()...),
 				},
 				{
 					Name:        "ssh-config",
@@ -599,4 +613,39 @@ func isTokenValid(options *carrier.StartOptions, log *zerolog.Logger) (bool, err
 
 	// A redirect to login means the token was invalid.
 	return !carrier.IsAccessResponse(resp), nil
+}
+
+// writeAccessPidFile writes the current process's PID to pidPathname. The path
+// is expanded for a leading "~" so that it matches the behavior of the tunnel
+// command's --pidfile flag.
+func writeAccessPidFile(pidPathname string, log *zerolog.Logger) {
+	expandedPath, err := homedir.Expand(pidPathname)
+	if err != nil {
+		log.Err(err).Str("pidfile", pidPathname).Msg("Unable to expand the path, try to use absolute path in --pidfile")
+		return
+	}
+	cleanPath := filepath.Clean(expandedPath)
+	file, err := os.Create(cleanPath)
+	if err != nil {
+		log.Err(err).Str("pidfile", cleanPath).Msg("Unable to write pid")
+		return
+	}
+	defer func() { _ = file.Close() }()
+	if _, err := fmt.Fprintf(file, "%d", os.Getpid()); err != nil {
+		log.Err(err).Str("pidfile", cleanPath).Msg("Unable to write pid")
+	}
+}
+
+// removeAccessPidFile removes the pidfile at pidPathname. Errors are logged but
+// not returned so that the caller does not need to special-case cleanup paths.
+func removeAccessPidFile(pidPathname string, log *zerolog.Logger) {
+	expandedPath, err := homedir.Expand(pidPathname)
+	if err != nil {
+		log.Err(err).Str("pidfile", pidPathname).Msg("Unable to expand the path when removing pidfile")
+		return
+	}
+	cleanPath := filepath.Clean(expandedPath)
+	if err := os.Remove(cleanPath); err != nil && !os.IsNotExist(err) {
+		log.Err(err).Str("pidfile", cleanPath).Msg("Unable to remove pidfile")
+	}
 }

@@ -268,7 +268,7 @@ func (rp *http2RespWriter) WriteRespHeaders(status int, header http.Header) erro
 	// Perform user header serialization and set them in the single header
 	dest.Set(CanonicalResponseUserHeaders, SerializeHeaders(userHeaders))
 
-	rp.setResponseMetaHeader(responseMetaHeaderOrigin)
+	rp.setResponseMetaHeader(responseMetaHeaderFor("origin", false))
 	// HTTP2 removes support for 101 Switching Protocols https://tools.ietf.org/html/rfc7540#section-8.1.1
 	if status == http.StatusSwitchingProtocols {
 		status = http.StatusOK
@@ -337,9 +337,9 @@ func (rp *http2RespWriter) WriteErrorResponse(err error) bool {
 	}
 
 	if errors.Is(err, cfdflow.ErrTooManyActiveFlows) {
-		rp.setResponseMetaHeader(responseMetaHeaderCfdFlowRateLimited)
+		rp.setResponseMetaHeader(responseMetaHeaderFor("cloudflared", true))
 	} else {
-		rp.setResponseMetaHeader(responseMetaHeaderCfd)
+		rp.setResponseMetaHeader(responseMetaHeaderFor("cloudflared", false))
 	}
 	rp.w.WriteHeader(http.StatusBadGateway)
 	rp.statusWritten = true

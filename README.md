@@ -1,5 +1,7 @@
 # Cloudflare Tunnel client
 
+> **注意：** 本仓库的 `sidecar/` 目录下包含一个 **SkyNet SSI 增强版** cloudflared-sidecar 组件。它将原生 cloudflared 二进制封装为符合 SkyNet SSI v1.0 规范的组件，支持通过 SkyNet Runtime 统一管理隧道生命周期。相比官方原版，该增强版增加了进程崩溃自动感知、panic 隔离、DoS 防护、优雅退出等工程级特性。详见 [sidecar/README.md](sidecar/README.md)。
+
 Contains the command-line client for Cloudflare Tunnel, a tunneling daemon that proxies traffic from the Cloudflare network to your origins.
 This daemon sits between Cloudflare network and your origin (e.g. a webserver). Cloudflare attracts client requests and sends them to you
 via this daemon, without requiring you to poke holes on your firewall --- your origin can remain as closed as possible.

@@ -321,6 +321,13 @@ func StartServer(
 	namedTunnel *connection.TunnelProperties,
 	log *zerolog.Logger,
 ) error {
+	// Validate parameters *before* spawning any goroutines. Otherwise a nil
+	// namedTunnel would leak the signal-watcher / systemd / autoupdater
+	// goroutines when we return early below.
+	if namedTunnel == nil {
+		return fmt.Errorf("namedTunnel is nil")
+	}
+
 	err := sentry.Init(sentry.ClientOptions{
 		Dsn:     sentryDSN,
 		Release: c.App.Version,
@@ -395,10 +402,6 @@ func StartServer(
 		)
 		errC <- autoupdater.Run(ctx)
 	}()
-
-	if namedTunnel == nil {
-		return fmt.Errorf("namedTunnel is nil")
-	}
 
 	logTransport := logger.CreateTransportLoggerFromContext(c, logger.EnableTerminalLog)
 
