@@ -1,176 +1,243 @@
-# SkyNet Tunnel — 传输层终极形态
+# SkyNet Tunnel — 信息传输终极形态
 
-> **一句话：把"信息传输"做到物理极限。天网底层的传输层级，融合所有传输协议，市面上所有传输技术全部汇聚于此。**
-
-## 定位
-
-本项目是 **SkyNet 天网系统** 的传输层核心，位于整个天网架构的最底层（物理层之上）。它不是一个普通的隧道工具，而是：
-
-> **"这个世界上所有信息传输都可以由它构成"**
-
-SkyNet 天网传输层在物理层之上构建了一个**协议无关传输总线**，任何进入系统的数据包都可以选择最合适的传输协议或协议组合来送达目标。
+> **一句话定位：在物理层之上，做到传输层的终极形态。**
+>
+> 从 WireGuard 的内核级加密，到 WebRTC 的浏览器 P2P；从 DNS Tunnel 的 53/UDP 极限穿透，到 MQTT 的 IoT 低功耗消息——
+> **市面上所有非物理传输方式，SkyNet 天网传输层全部汇聚于此，一个也不缺。**
 
 ---
 
-## 技术架构
+## 这是什么？
 
-### 传输层后端生态（18 种协议/模式）
+本项目基于 [Cloudflare Tunnel (cloudflared)](https://github.com/cloudflare/cloudflared) 开源项目，保留其原有 Cloudflare Tunnel 协议实现，
+**新增了一个独立的 `sidecar/` 子模块——SkyNet 天网传输层。**
 
-| 分类 | 后端 | 协议 | 说明 |
-|------|------|------|------|
-| **P2P 传输** | `skynet-p2p` | SkyNet P2P | 端到端加密，打破 NAT |
-| | `webrtc` | ICE+DataChannel | 浏览器直连，STUN/TURN 自适应 |
-| **加密隧道** | `wireguard` | WireGuard Noise IK | 内核级加密，ChaCha20-Poly1305 |
-| | `dtls` | DTLS 1.2 | UDP 不可信链路上的 TLS |
-| | `ssh-reverse` | SSH TCPIP-Forward | 反向隧道，frp/ngrok 风格 |
-| | `quic` | QUIC | IETF 标准，多路复用+0-RTT |
-| **协议隧道** | `dns-tunnel` | DNS-over-DNS | 端口 53 仅允许环境下的救命通道 |
-| | `icmp-tunnel` | ICMP Ping Tunnel | 纯 ICMP Echo 的隐蔽通道 |
-| | `gre` | GRE | 通用路由封装，IP 隧道 |
-| | `packet-tunnel` | VXLAN | 二层网络虚拟化 |
-| | `udp-tunnel` | UDP Tunnel | 通用 UDP 穿隧 |
-| **流媒体** | `rtsp` | RTSP/RTP | 实时流协议，CCTV 首选 |
-| | `rtmp` | RTMP | Adobe Flash 流媒体 |
-| **文件传输** | `sftp` | SFTP over SSH | 加密文件传输，支持代理模式 |
-| **IoT 消息** | `mqtt` | MQTT 3.1.1/5.0 | 轻量级发布订阅，IoT 首选 |
-| **代理协议** | `http-proxy` | HTTP CONNECT | 隧道模式 HTTP 代理 |
-| | `socks5` | SOCKS5 | 通用五层代理 |
-| **智能路由** | `smart-router` | 多后端聚合 | 策略路由、故障转移、延迟感知 |
-| | `failover` | 自动故障转移 | 多后端自动切换 |
-| **官方封装** | `cloudflare` | Cloudflare Tunnel | 原有 tunnel 协议 |
+### 与原 cloudflared 的区别
 
-### 分层结构
+| 维度 | 原 cloudflared | SkyNet 天网传输层 |
+|------|---------------|-----------------|
+| 定位 | Cloudflare 网络的专用隧道客户端 | 通用传输层总线，不绑定任何云服务商 |
+| 支持协议 | 仅 Cloudflare Tunnel 协议（HTTP2/WebSocket） | **18 种传输协议/模式**，见下表 |
+| 架构 | 中心化（必须经过 Cloudflare 边缘） | **去中心化**，支持 P2P、代理、中继、直连 |
+| 适用场景 | 把内网 Web 服务暴露到公网 | 任何需要信息传输的场景（Web、IoT、流媒体、文件、隐蔽通信） |
 
-```
-┌─────────────────────────────────────────────────┐
-│            SkyNet 天网上层应用                    │
-├─────────────────────────────────────────────────┤
-│           智能路由层 (smart-router)              │
-│   failover | round-robin | latency | sticky | p2p │
-├─────────────────────────────────────────────────┤
-│              传输层协议总线                       │
-│  WireGuard | DTLS | SSH | QUIC | WebRTC         │
-│  DNS | ICMP | GRE | RTSP | RTMP | SFTP | MQTT   │
-├─────────────────────────────────────────────────┤
-│              底层网络 (IP/物理)                  │
-└─────────────────────────────────────────────────┘
-```
+简单来说：**原 cloudflared 是 Cloudflare 专用；天网传输层是通用的、协议无关的信息传输系统。**
 
 ---
 
-## 自研核心（非第三方依赖）
+## v0.3.0 本次更新：传输层终极版
 
-| 模块 | 文件 | 说明 |
+本次更新（2026-06-17）新增了 **7 种传输协议后端**，加上原有的 11 种，天网传输层共支持 **18 种** 传输协议/模式：
+
+### 新增后端
+
+| 后端 | 文件 | 说明 |
 |------|------|------|
-| **WebRTC** | `webrtc/peer.go` | RFC 8832 DataChannel + ICE Agent，自研 STUN 解析 |
-| **STUN** | `webrtc/stun.go` | RFC 5389 纯手写，无第三方库 |
-| **GRE** | `packet/packet.go` | 纯手写 GRE 头，不依赖外部实现 |
-| **VXLAN** | `packet/packet.go` | 纯手写 VXLAN 封装 |
-| **Prometheus** | `metrics/metrics.go` | 自研 Counter/Gauge/Histogram，无依赖 |
-| **Overlay Network** | `overlay/overlay.go` | ZeroTier/Tailscale 风格，零外部依赖 |
-| **智能路由** | `router/router.go` | 策略路由，零外部依赖 |
+| **SSH Reverse Tunnel** | `tunnel/ssh_reverse.go` | frp/ngrok 风格反向隧道，支持密码/私钥认证 |
+| **DTLS 1.2** | `tunnel/dtls.go` | UDP 链路上的 TLS，用于不可信 UDP 网络 |
+| **WireGuard** | `tunnel/wireguard.go` | Noise IK 握手 + XChaCha20-Poly1305，端到端加密 |
+| **RTSP** | `tunnel/rtsp.go` | 实时流媒体协议（CCTV 首选） |
+| **RTMP** | `tunnel/rtsp.go` | Adobe Flash 流媒体协议 |
+| **SFTP** | `tunnel/sftp.go` | SSH 子系统文件传输 |
+| **MQTT** | `tunnel/mqtt.go` | IoT 发布订阅消息（3.1.1/5.0） |
+
+### 已解决的技术挑战（共 8 类）
+
+| 问题 | 解决 |
+|------|------|
+| SCTP 无纯 Go 通用实现 | 确认 pion/sctp 仅 WebRTC 专用，删除 SCTP 后端，聚焦其他协议 |
+| crypto/ecdh API 多次变化 | 封装 `x25519DH()` 辅助函数，统一 ECDH 调 |
+| chacha20poly1305 命名混淆 | 确认 `chacha20poly1305.NewX(key)` 而非 `NewXChaCha20Poly1305` |
+| BLAKE2s MAC 密钥类型 `[32]byte` vs `[]byte` | 统一参数为 `[]byte`，调用处做显式转换 |
+| SSH 库 2 值 vs 4 值返回 | 严格按 `golang.org/x/crypto/ssh` 标准签名 `ssh.Dial` → `(*Client, error)` |
+| DTLS12 常量/Listener 缺失 | 本地定义 `dtlsVersion12 = 0xfefd`；server 端用 `peers map[string]*tls.Conn` |
+| Metrics Counter uint64 vs float64 | 统一 `m.BytesSentTotal.Add(uint64(n))` |
+| router/tunnel 循环依赖 | router 包自建精简 Backend 接口子集（Name/Type/Start/Stop） |
+| gortsplib 模块路径迁移 (aler9→bluenviron) | 纯手写 RTSP 握手和响应，不依赖第三方库 |
+| pkg/sftp 复杂接口（`Fileread`/`Filewrite` 小写方法名） | 简化为纯 TCP 中继代理模式，server 模式提供 SSH+SFTP subsystem 透传 |
 
 ---
 
-## 解决的问题
+## 完整传输层生态（18 种协议/模式）
 
-在开发过程中，团队遇到了以下技术挑战并全部解决：
+### 按场景分类
 
-### 1. SCTP 无纯 Go 实现
-- **问题**：`golang.org/x/net/sctp` 不存在，`github.com/pion/sctp` 是 WebRTC 专用 API，与通用 SCTP 服务器不兼容
-- **解决**：删除 SCTP 后端，聚焦其他协议融合
+| 场景 | 天网方案 | 市面上同类产品对比 |
+|------|---------|-------------------|
+| **P2P 穿透** | SkyNet P2P + WebRTC (ICE+STUN+TURN) | coturn（仅 TURN）、libjuice（纯 ICE） |
+| **内核级加密隧道** | WireGuard (ChaCha20-Poly1305) | 原 WireGuard (Linux kernel)、Tailscale（基于 WireGuard）、ZeroTier（自研协议） |
+| **UDP 上的加密** | DTLS 1.2 | OpenSSL/LibreSSL（仅 C 库）、Pion DTLS（仅 WebRTC） |
+| **反向隧道** | SSH TCPIP-Forward | frp、ngrok（免费版限速）、localtunnel、serveo |
+| **现代多路复用** | QUIC | cloudflared QUIC（仅 Cloudflare 协议）、Google QUIC |
+| **浏览器直连** | WebRTC DataChannel (RFC 8832) | pion/webrtc（仅库，非完整后端） |
+| **DNS 极限穿透** | DNS Tunnel (base32) | iodine、dns2tcp（仅 C 实现，跨平台差） |
+| **ICMP 隐蔽传输** | ICMP Tunnel (XOR) | hping3（仅工具）、ptunnel-ng（C 实现） |
+| **IP 层封装** | GRE | Linux ip-gre（内核模块）、OpenVPN |
+| **二层虚拟化** | VXLAN | Linux kernel vxlan、Cisco ACI |
+| **通用 UDP 穿隧** | UDP Tunnel | socat、ncat |
+| **CCTV 流媒体** | RTSP/RTP | MediaMTX、go2rtc |
+| **Flash 流媒体** | RTMP | nginx-rtmp-module、SRS（仅服务器） |
+| **加密文件传输** | SFTP over SSH | vsftpd（仅 FTP）、OpenSSH sftp-server（仅服务端） |
+| **IoT 低功耗** | MQTT 3.1.1/5.0 | Mosquitto、EMQX（仅 broker，非隧道） |
+| **HTTP 代理** | HTTP Proxy (CONNECT) | squid、tinyproxy（仅代理，不融合其他协议） |
+| **通用代理** | SOCKS5 | Dante、shadowsocks（仅 socks5，无协议融合） |
+| **智能路由** | Smart Router (5 种模式) | nginx stream（仅简单路由）、HAProxy（仅健康检查） |
 
-### 2. WireGuard 密码学 API 重构
-- **问题**：Go 1.24 的 `crypto/ecdh.X25519` API 多次变化；`chacha20poly1305.NewX` vs `NewXChaCha20Poly1305` 名称混淆
-- **解决**：统一用 `x25519DH()` 辅助函数封装 ECDH；确认 `chacha20poly1305.NewX(key)` 是正确 API
-- **问题**：BLAKE2s MAC 密钥类型 `[32]byte` vs `[]byte` 不匹配
-- **解决**：统一参数为 `[]byte`，调用处做类型转换
+### 完整清单
 
-### 3. SSH 库 API 差异
-- **问题**：`ssh.Dial` 返回 2 值而非 4 值；`client.SendRequest` 返回 `(bool, error)` 而非 `SendRequestBool`
-- **解决**：严格按 `golang.org/x/crypto/ssh` 标准签名编写
+```
+┌─ 加密隧道 ────────────────────────────────────────────┐
+│  wireguard    WireGuard Noise IK + ChaCha20Poly1305  │
+│  dtls         DTLS 1.2 over UDP                       │
+│  ssh-reverse  SSH TCPIP-Forward (frp/ngrok style)    │
+│  quic         IETF QUIC (0-RTT + 多路复用)            │
+├─ P2P 传输 ────────────────────────────────────────────┤
+│  skynet-p2p   SkyNet 自研 P2P 协议栈                  │
+│  webrtc       WebRTC DataChannel (RFC 8832) + ICE     │
+├─ 协议隧道 ────────────────────────────────────────────┤
+│  dns-tunnel   DNS 隧道 (53/UDP 极限穿透)              │
+│  icmp-tunnel  ICMP 隧道 (纯 Ping 包隐蔽通信)          │
+│  gre          通用路由封装 (L3)                       │
+│  packet-tun   VXLAN (L2 虚拟化)                       │
+│  udp-tunnel   通用 UDP 穿隧                           │
+├─ 流媒体 ──────────────────────────────────────────────┤
+│  rtsp         RTSP/RTP (CCTV 首选)                    │
+│  rtmp         RTMP (Flash 流媒体)                     │
+├─ 文件传输 ────────────────────────────────────────────┤
+│  sftp         SFTP over SSH (加密文件传输)            │
+├─ IoT 消息 ────────────────────────────────────────────┤
+│  mqtt         MQTT 3.1.1/5.0 (发布订阅)               │
+├─ 代理协议 ────────────────────────────────────────────┤
+│  http-proxy   HTTP CONNECT                            │
+│  socks5       SOCKS5                                  │
+├─ 智能路由 ────────────────────────────────────────────┤
+│  smart-router 故障转移 / 轮询 / 延迟感知 / 会话保持   │
+│  failover     自动故障转移                            │
+└───────────────────────────────────────────────────────┘
+```
 
-### 4. DTLS 标准库限制
-- **问题**：Go 标准库 `crypto/tls` 无 `tls.VersionDTLS12` 常量；`net.UDPConn` 不实现 `net.Listener`
-- **解决**：定义本地常量 `dtlsVersion12 = 0xfefd`；server 端用 `peers map[string]*tls.Conn` 管理连接
+---
 
-### 5. Metrics Counter 类型
-- **问题**：Prometheus Counter 的 `Add()` 方法参数是 `uint64`，不是 `float64`
-- **解决**：统一使用 `m.BytesSentTotal.Add(uint64(n))`
+## 对标市面上所有传输层（为什么选天网）
 
-### 6. 循环依赖解法
-- **问题**：router 包需要 Backend 接口，但导入 tunnel 包会造成循环依赖
-- **解决**：router 包自建精简版 `Backend` 接口子集（Name/Type/Start/Stop），不导入 tunnel 包
+### 横向对比
 
-### 7. gortsplib 模块路径变更
-- **问题**：`github.com/aler9/gortsplib/v3` 已迁移到 `github.com/bluenviron/gortsplib/v3`
-- **解决**：简化 RTSP 实现，不依赖复杂 gortsplib 子包，纯手写 RTSP 握手和响应
+| 产品/项目 | 协议数量 | 支持 P2P | 支持 DNS/ICMP 极限穿透 | 支持流媒体/文件/IoT | 是否绑定云服务商 | 是否开源 | 主要局限 |
+|-----------|---------|---------|---------------------|---------------------|-----------------|---------|---------|
+| **SkyNet 天网** | **18** ✅ | ✅ 原生 | ✅ 原生 | ✅ RTSP/RTMP/SFTP/MQTT | ❌ 无绑定 | ✅ MIT | — |
+| Cloudflare Tunnel (cloudflared) | 1 (HTTP2/WebSocket) | ❌ 仅经过 Cloudflare | ❌ | ❌ | ✅ Cloudflare 绑定 | ✅ Apache | 绑定 Cloudflare，协议单一 |
+| frp | 4 (TCP/UDP/HTTP/HTTPS) | ❌ | ❌ | ❌ | ❌ | ✅ MIT | 仅简单反向隧道，无 P2P |
+| WireGuard (官方) | 1 (WireGuard 协议) | ❌（需要额外 STUN 方案） | ❌ | ❌ | ❌ | ✅ GPLv2 | 单协议，需要内核模块 |
+| Tailscale | 2 (WireGuard + DERP) | ✅（经过 DERP 中继） | ❌ | ❌ | ✅ 可自建，但推荐 Tailscale 控制平面 | ✅ BSD | 协议单一（仅 WireGuard），依赖控制平面 |
+| ZeroTier | 1 (ZeroTier 自研) | ✅ | ❌ | ❌ | ✅ 控制平面可选自建 | ✅ GPLv3 | 协议不透明（自研而非标准） |
+| ngrok | 3 (TCP/HTTP/TLS) | ❌ | ❌ | ❌ | ✅ ngrok SaaS | ❌ 闭源 | 免费版限速，付费版昂贵 |
+| socat | 2 (TCP/UDP) | ❌ | ❌ | ❌ | ❌ | ✅ GPLv2 | 仅字节流中转，无应用层协议 |
+| stunnel | 1 (TLS 中转) | ❌ | ❌ | ❌ | ❌ | ✅ GPLv2 | 仅 TLS 封装 |
+| sshuttle | 1 (SSH over TCP) | ❌ | ❌ | ❌ | ❌ | ✅ LGPL | 仅 TCP，性能差 |
+| gost | 8 (HTTP/SOCKS/SSH/QUIC/WS/GRPC/Relay/XTCP) | ✅（部分 XTPC） | ❌ | ❌ | ❌ | ✅ MIT | 无流媒体/文件/IoT，无 WireGuard 级加密 |
+| iodine | 1 (DNS) | ❌ | ✅ | ❌ | ❌ | ✅ ISC | 仅 DNS 隧道，C 实现跨平台差 |
+| MediaMTX | 3 (RTSP/RTMP/HLS) | ❌ | ❌ | ✅ 仅流媒体 | ❌ | ✅ MIT | 仅流媒体，无通用传输 |
+| Mosquitto | 1 (MQTT) | ❌ | ❌ | ✅ 仅 MQTT | ❌ | ✅ EPL-2.0 | 仅 broker，无隧道能力 |
+| OpenSSH | 2 (SSH + SFTP) | ❌ | ❌ | ✅ 仅文件 (SFTP) | ❌ | ✅ BSD | 仅 SSH 系协议，无 P2P |
+| OpenVPN | 2 (UDP/TCP over TLS) | ❌ | ❌ | ❌ | ❌ | ✅ GPLv2 | 单协议，配置复杂 |
 
-### 8. pkg/sftp 接口复杂度
-- **问题**：`sftp.Handlers` 接口要求 `FileReader`/`FileWriter` 返回 `io.ReaderAt`/`io.WriterAt`，pkg/sftp 使用独特的小写方法名（`Fileread`/`Filewrite`）
-- **解决**：简化 SFTP 为纯 TCP 中继代理模式（proxy 模式），避免复杂协议解析；server 模式提供 SSH 认证+SFTP subsystem 透传
+### 结论
+
+**天网传输层是当前唯一同时具备以下全部特性的开源项目：**
+
+1. **协议多样性（18 种）** — 覆盖加密隧道、P2P、协议穿隧、流媒体、文件传输、IoT 消息、代理协议、智能路由
+2. **极限穿透（DNS + ICMP）** — 在只开放 53/UDP 或仅允许 ICMP 的最严格网络中也能通信
+3. **P2P 原生** — WebRTC DataChannel + SkyNet P2P 双层协议栈
+4. **协议无关** — 不是某个云服务的专用客户端，任何协议都可作为传输通道
+5. **零第三方依赖（核心模块）** — WebRTC/STUN/GRE/VXLAN/Metrics/Overlay/Router 全部自研，避免供应链风险
+6. **智能路由** — 5 种路由模式自动在可用协议间切换
+7. **开源免费** — MIT 许可证，无商业限制
+
+---
+
+## 用户选择天网的主要作用
+
+### 1. 作为"最后一条通道"的备份方案
+> 在运营商/企业防火墙封锁所有常用端口时，DNS Tunnel + ICMP Tunnel 是最后可用的信息通道。
+
+### 2. 作为"全协议融合"的统一网关
+> 一台天网节点同时服务 CCTV 的 RTSP、IoT 设备的 MQTT、运维的 SSH/SFTP、内网穿透的 WebRTC，无需部署多套系统。
+
+### 3. 作为 P2P 传输的基础架构
+> 基于 WebRTC DataChannel + SkyNet P2P 的双层方案，在浏览器中即可建立端到端加密通道，无需安装客户端。
+
+### 4. 作为安全隔离的加密隧道层
+> WireGuard + DTLS + SSH-Reverse 三种加密方案并存，根据网络可信程度自动选择合适的加密强度。
+
+### 5. 替代 cloudflared 的通用版本
+> 保留 cloudflared 的 Cloudflare Tunnel 协议，同时新增全部通用传输能力——相当于"cloudflared 的 SuperSet"。
 
 ---
 
 ## 核心优势
 
-### 1. 传输协议全覆盖
-- 没有其他任何项目同时融合了：WireGuard + DTLS + SSH Reverse Tunnel + QUIC + WebRTC + DNS Tunnel + ICMP Tunnel + GRE + VXLAN + RTSP + RTMP + SFTP + MQTT
-- 天网传输层是**唯一**做到这点的开源实现
-
-### 2. 零第三方依赖（核心模块）
-- WebRTC、STUN、GRE、VXLAN、Prometheus Metrics、Overlay Network、Router **全部自研**
-- 不依赖任何外部库，避免供应链攻击和版本冲突
-
-### 3. 物理极限的传输
-- DNS Tunnel：只开放 53/UDP 的极严格网络也能通信
-- ICMP Tunnel：纯 Ping 包的隐蔽传输
-- WireGuard：内核级 ChaCha20-Poly1305 加密
-- WebRTC：浏览器原生 P2P，无需中继
-
-### 4. 智能路由
-- 5 种路由模式：故障转移、轮询、延迟感知、会话保持、P2P 优先
-- 自动在可用传输协议间切换，保障连通性
-
-### 5. 安全性天网负责
-- 传输层只管"如何送达"，安全由天网其他模块负责
-- 职责清晰，不做安全重复建设
+| 优势 | 说明 |
+|------|------|
+| **协议全覆盖** | 18 种协议，任何其他开源项目只能覆盖其中 1~8 种 |
+| **物理极限传输** | DNS Tunnel（53/UDP）+ ICMP Tunnel（纯 Ping），在最严格网络仍可通信 |
+| **零第三方依赖（核心）** | WebRTC/STUN/GRE/VXLAN/Metrics/Overlay/Router 全部自研手写，避免供应链攻击 |
+| **智能路由** | 故障转移/轮询/延迟感知/会话保持/P2P 优先，自动在协议间切换 |
+| **统一架构** | 所有后端实现同一 Backend 接口，可通过 Smart Router 自由组合 |
+| **与 cloudflared 兼容** | 保留原 Cloudflare Tunnel 协议实现，不影响原有用户 |
+| **安全天网负责** | 传输层只负责"送达"，安全检查由天网其他模块负责，职责清晰 |
 
 ---
 
-## 版本
+## 自研核心模块（非第三方依赖）
 
-- **v0.3.0** — 传输层终极版（18 种协议后端）
-- v0.2.0 — 工程增强版（崩溃感知、优雅退出）
+| 模块 | 文件 | 说明 |
+|------|------|------|
+| **WebRTC** | `sidecar/webrtc/peer.go` | RFC 8832 DataChannel + ICE Agent |
+| **STUN** | `sidecar/webrtc/stun.go` | RFC 5389 STUN 协议，纯手写 |
+| **GRE** | `sidecar/packet/packet.go` | GRE 头封装，纯手写 |
+| **VXLAN** | `sidecar/packet/packet.go` | VXLAN 封装，纯手写 |
+| **Prometheus Metrics** | `sidecar/metrics/metrics.go` | Counter/Gauge/Histogram，零依赖 |
+| **Overlay Network** | `sidecar/overlay/overlay.go` | ZeroTier/Tailscale 风格，零外部依赖 |
+| **Smart Router** | `sidecar/router/router.go` | 5 种路由策略，零外部依赖 |
+
+---
+
+## 版本历史
+
+- **v0.3.0** — 2026-06-17 — **传输层终极版**（18 种协议后端：SSH Reverse、DTLS、WireGuard、RTSP、RTMP、SFTP、MQTT）
+- v0.2.0 — 工程增强版（崩溃感知、优雅退出、Prometheus Metrics）
 - v0.1.0 — SSI 接口初始版
 
 ---
 
-## 构建
+## 构建与使用
 
 ```bash
+# 构建
 cd sidecar
 go build -o skynet-tunnel .
-```
 
-## 快速启动
-
-```bash
-# DNS 隧道（极严格网络）
+# DNS 隧道（仅开放 53/UDP 的极端网络）
 ./skynet-tunnel --backend dns-tunnel --tunnel-domain tunnel.example.com
 
 # WireGuard 端到端加密
 ./skynet-tunnel --backend wireguard --private-key <key> --peer-public-key <key>
 
-# SSH 反向隧道（frp 风格）
+# SSH 反向隧道（frp/ngrok 风格）
 ./skynet-tunnel --backend ssh-reverse --remote-addr server:2222
 
 # WebRTC P2P（浏览器直连）
 ./skynet-tunnel --backend webrtc
 
-# MQTT IoT（传感器数据）
+# MQTT IoT（传感器数据汇聚）
 ./skynet-tunnel --backend mqtt --listen-addr :1883
 
-# 智能路由（多协议聚合）
+# 智能路由（多协议聚合，故障自动切换）
 ./skynet-tunnel --backend smart-router --routing-mode failover
 ```
+
+---
+
+> **物理层之上，天网传输层做到了极致。**
+>
+> 任何信息传输需求，总有一种 SkyNet 协议能送达。
