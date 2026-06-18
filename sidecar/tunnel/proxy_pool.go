@@ -56,6 +56,19 @@ var DefaultProxyPoolSubscriptionURLs = []string{
 	"https://raw.githubusercontent.com/Barabama/FreeNodes/main/nodes/ndnode.txt",
 	// caijh/FreeProxiesScraper — 每行 base64 编码的 SS/VMess/Trojan 订阅
 	"https://raw.githubusercontent.com/caijh/FreeProxiesScraper/master/Eternity",
+	// snakem982/proxypool — Clash.Meta / V2Ray 多协议节点池
+	"https://raw.githubusercontent.com/snakem982/proxypool/main/source/clash-meta.yaml",
+	"https://raw.githubusercontent.com/snakem982/proxypool/main/source/clash-meta-2.yaml",
+	"https://raw.githubusercontent.com/snakem982/proxypool/main/source/v2ray-2.txt",
+	// futianhang/freeNodes — 汇总多源免费节点订阅
+	"https://raw.githubusercontent.com/futianhang/freeNodes/master/output/AllNodes.txt",
+	"https://raw.githubusercontent.com/futianhang/freeNodes/master/output/Clash.yml",
+	// free-nodes/v2rayfree — 每日更新的 V2Ray 节点
+	"https://raw.githubusercontent.com/free-nodes/v2rayfree/main/output/v2ray.txt",
+	// zebbern/Proxy-Scraper — 每小时更新 HTTP/HTTPS/SOCKS4/SOCKS5 纯代理
+	"https://raw.githubusercontent.com/zebbern/Proxy-Scraper/main/proxies.txt",
+	// OpenRunner/clash-freenode — Clash/V2Ray/SSR 多协议共享（聚合站）
+	"https://free.datiya.com/subscribe/clash.yml",
 }
 
 // proxyPoolBackend maintains a dynamically-refreshed pool of free proxies.
