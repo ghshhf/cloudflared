@@ -204,9 +204,100 @@
 
 ## 版本历史
 
+- **v0.4.0** — 2026-06-18 — **工程加固版**（全包测试覆盖 / SSH HostKey 安全修复 / 构建与 CI 自动化）
 - **v0.3.0** — 2026-06-17 — **传输层终极版**（18 种协议后端：SSH Reverse、DTLS、WireGuard、RTSP、RTMP、SFTP、MQTT）
 - v0.2.0 — 工程增强版（崩溃感知、优雅退出、Prometheus Metrics）
 - v0.1.0 — SSI 接口初始版
+
+---
+
+## 开发与贡献
+
+### 测试状态
+
+本 fork 在工程加固方面做了系统性投入，**11/11 个包已实现测试全覆盖**，总计约 270 个单元测试：
+
+```
+sidecar                        ok   11/11 包全覆盖 ✅
+sidecar/cmd/swbn-pkg           ok
+sidecar/dashboard              ok
+sidecar/ipc                    ok
+sidecar/metrics                ok
+sidecar/overlay                ok
+sidecar/packet                 ok
+sidecar/router                 ok
+sidecar/ssi                    ok
+sidecar/tunnel                 ok
+sidecar/webrtc                 ok
+```
+
+### 运行测试
+
+```bash
+# 全部测试（推荐）
+cd sidecar
+go test -count=1 ./...
+
+# 单包测试
+go test -v -count=1 ./ipc/
+
+# 测试覆盖率报告
+go test -count=1 -coverprofile=coverage.out ./...
+go tool cover -html=coverage.out -o coverage.html
+
+# 使用 Makefile
+make test          # 全部测试
+make test-race     # 带 race detector 测试（需 CGO）
+make test-coverage # 生成 HTML 覆盖率报告
+make lint          # golangci-lint（回退：go vet）
+```
+
+### 构建
+
+```bash
+# 构建 sidecar（native）
+cd sidecar
+make build
+
+# 交叉编译
+make build-linux
+make build-darwin
+make build-windows
+
+# 构建 SWBN 打包工具
+make build-swbn
+
+# 一键打包 .swbn（含 cloudflared 二进制）
+./swbn-pkg --sidecar ./cloudflared-sidecar --cloudflared /path/to/cloudflared --manifest ./manifest.json --out tunnel.swbn
+```
+
+### CI / 自动化
+
+- **GitHub Actions** — 每次 push/PR 自动运行 build + vet + 测试 + 覆盖率 + 交叉编译，每日 06:00 UTC 定时检查
+- **smoke_test.sh** — 本地一键验证脚本：build / 交叉编译 / vet / 测试 / swbn-pkg
+  ```bash
+  bash smoke_test.sh
+  ```
+- **VSCode 调试** — `.vscode/launch.json` 提供 8 个一键配置：运行 sidecar、测试各包、构建工具
+
+### 代码规范
+
+```bash
+make fmt    # go fmt 格式化
+make vet    # go vet 静态检查
+make lint   # golangci-lint（含 30+ 规则）
+```
+
+### 本 fork 工程增强速览
+
+| 类别 | 内容 |
+|------|------|
+| **测试覆盖** | 11/11 包，约 270 个单元测试，覆盖 IPC 总线/Metrics/协议编解码/状态机/全部 18 种后端 |
+| **安全修复** | SSH 反向隧道：`InsecureIgnoreHostKey` → 可配置指纹验证（HostKeyFingerprint / InsecureSkipVerify / fail-closed） |
+| **Bug 修复** | ICMP 校验和奇长度越界（panic）、GRE Marshal 可选字段缺失（解析错位）、STUN 构建缓冲区不足（panic） |
+| **构建工具链** | Makefile（build/test/lint/交叉编译）、smoke_test.sh（一键验证）、.gitignore |
+| **CI/CD** | GitHub Actions 增强（覆盖率/交叉编译/定时执行）、WorkBuddy 每日自动化 |
+| **调试** | VSCode launch.json（8 个配置，含调试启动、单包测试、构建工具） |
 
 ---
 
