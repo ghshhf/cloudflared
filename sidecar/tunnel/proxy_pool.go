@@ -63,9 +63,9 @@ type proxyPoolBackend struct {
 	cfg Config
 
 	mu           sync.Mutex
-	subscription []string         // proxy list download URLs
+	subscription []string              // proxy list download URLs
 	pool         map[string]*proxyNode // addr → node (healthy only)
-	allNodes     []*proxyNode     // all nodes ever discovered (for iteration)
+	allNodes     []*proxyNode          // all nodes ever discovered (for iteration)
 	ready        chan struct{}
 	started      bool
 	stopped      bool
@@ -76,9 +76,9 @@ type proxyPoolBackend struct {
 	proxyServer   *http.Server
 
 	// stats
-	totalFetched  uint64
-	totalValid    uint64
-	totalExpired  uint64
+	totalFetched uint64
+	totalValid   uint64
+	totalExpired uint64
 }
 
 // fetchClient is a dedicated HTTP client with sane timeouts for
@@ -119,9 +119,9 @@ func newProxyPoolBackend(cfg Config) *proxyPoolBackend {
 	}
 }
 
-func (b *proxyPoolBackend) Name() string             { return "proxy-pool://" + b.cfg.Name }
-func (b *proxyPoolBackend) Type() string              { return TypeProxyPool }
-func (b *proxyPoolBackend) Ready() <-chan struct{}    { return b.ready }
+func (b *proxyPoolBackend) Name() string           { return "proxy-pool://" + b.cfg.Name }
+func (b *proxyPoolBackend) Type() string           { return TypeProxyPool }
+func (b *proxyPoolBackend) Ready() <-chan struct{} { return b.ready }
 
 // Start launches the proxy pool: initial fetch + background refresher.
 func (b *proxyPoolBackend) Start(ctx context.Context) error {
@@ -842,9 +842,9 @@ func (b *proxyPoolBackend) PoolStats() map[string]any {
 
 	return map[string]any{
 		"alive":         alive,
-		"total_fetched":  atomic.LoadUint64(&b.totalFetched),
-		"total_valid":    atomic.LoadUint64(&b.totalValid),
-		"total_expired":  atomic.LoadUint64(&b.totalExpired),
+		"total_fetched": atomic.LoadUint64(&b.totalFetched),
+		"total_valid":   atomic.LoadUint64(&b.totalValid),
+		"total_expired": atomic.LoadUint64(&b.totalExpired),
 		"protocols":     protos,
 		"by_protocol":   protos,
 		"latency_ms": map[string]float64{
@@ -853,7 +853,7 @@ func (b *proxyPoolBackend) PoolStats() map[string]any {
 			"max": float64(maxLatency) / float64(time.Millisecond),
 		},
 		"subscription_urls": b.subscription,
-		"proxy_listen":     b.cfg.ProxyListen,
+		"proxy_listen":      b.cfg.ProxyListen,
 	}
 }
 

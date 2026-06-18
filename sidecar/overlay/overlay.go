@@ -97,11 +97,11 @@ type NetworkConfig struct {
 type Network struct {
 	cfg NetworkConfig
 
-	mu         sync.RWMutex
-	localIP    VirtualIP
-	localID    NodeID
-	networkIP  net.IP    // network address (e.g. 10.144.0.0)
-	netmask    net.IPMask // e.g. /16
+	mu        sync.RWMutex
+	localIP   VirtualIP
+	localID   NodeID
+	networkIP net.IP     // network address (e.g. 10.144.0.0)
+	netmask   net.IPMask // e.g. /16
 
 	// Peers: keyed by NodeID.
 	peers map[NodeID]*Peer
@@ -122,9 +122,9 @@ type Peer struct {
 	VirtualIP VirtualIP
 	Name      string // human-readable label
 
-	mu       sync.RWMutex
-	online   atomic.Bool
-	paths    []Path // available paths to this peer, sorted by preference
+	mu     sync.RWMutex
+	online atomic.Bool
+	paths  []Path // available paths to this peer, sorted by preference
 
 	// Last-seen timestamp.
 	lastSeen time.Time
@@ -136,9 +136,9 @@ type Peer struct {
 // Path represents a transport path to a peer.
 type Path struct {
 	BackendType string // "skynet-p2p", "quic", "webrtc", etc.
-	Endpoint   string // address to reach peer via this path
-	Latency    int64  // RTT in milliseconds
-	Preferred  bool   // this path is preferred for this peer
+	Endpoint    string // address to reach peer via this path
+	Latency     int64  // RTT in milliseconds
+	Preferred   bool   // this path is preferred for this peer
 }
 
 // NewNetwork creates a new overlay network with the given configuration.
@@ -161,14 +161,14 @@ func NewNetwork(cfg NetworkConfig) (*Network, error) {
 	localIP := allocateIP(networkIP, nid[:])
 
 	n := &Network{
-		cfg:      cfg,
-		localID:  nid,
-		localIP:  localIP,
+		cfg:       cfg,
+		localID:   nid,
+		localIP:   localIP,
 		networkIP: networkIP,
-		netmask:  net.CIDRMask(16, 32),
-		peers:    make(map[NodeID]*Peer),
-		paths:    make(map[NodeID][]Path),
-		stopCh:   make(chan struct{}),
+		netmask:   net.CIDRMask(16, 32),
+		peers:     make(map[NodeID]*Peer),
+		paths:     make(map[NodeID][]Path),
+		stopCh:    make(chan struct{}),
 	}
 	return n, nil
 }
@@ -429,7 +429,7 @@ func simpleHash16(data ...[]byte) [16]byte {
 type PeerTable struct {
 	mu       sync.RWMutex
 	routes   map[VirtualIP]NodeID // virtual IP → node
-	byNodeID map[NodeID]VirtualIP  // node → virtual IP
+	byNodeID map[NodeID]VirtualIP // node → virtual IP
 }
 
 // NewPeerTable creates an empty routing table.

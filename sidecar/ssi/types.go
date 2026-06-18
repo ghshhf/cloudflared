@@ -72,14 +72,14 @@ func (e *SsiError) Error() string {
 
 // Common SSI error codes (small subset; projects can extend).
 const (
-	ErrOk            = 0
-	ErrInvalidState  = 1
-	ErrConfigInvalid = 2
-	ErrProcessStart  = 3
-	ErrProcessStop   = 4
+	ErrOk             = 0
+	ErrInvalidState   = 1
+	ErrConfigInvalid  = 2
+	ErrProcessStart   = 3
+	ErrProcessStop    = 4
 	ErrProcessCrashed = 5
-	ErrIPC           = 6
-	ErrNotFound      = 7
+	ErrIPC            = 6
+	ErrNotFound       = 7
 )
 
 // Config is the on-the-wire configuration accepted by the cloudflared sidecar.

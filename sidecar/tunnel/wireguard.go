@@ -37,34 +37,34 @@ import (
 //   - Persistent keepalive sends encrypted empty frames (correct) but the
 //     transport layer to receive and process responses is minimal.
 type wireGuardBackend struct {
-	name   string
-	cfg    wgConfig
-	ln     *net.UDPConn
+	name    string
+	cfg     wgConfig
+	ln      *net.UDPConn
 	readyCh chan struct{}
 	stopCh  chan struct{}
-	wg     sync.WaitGroup
+	wg      sync.WaitGroup
 
-	staticPub   [32]byte
-	ephemeralPriv []byte
-	sendKey, recvKey [32]byte
+	staticPub            [32]byte
+	ephemeralPriv        []byte
+	sendKey, recvKey     [32]byte
 	sendNonce, recvNonce atomic.Uint64
 
-	hsMu       sync.Mutex
-	hsChain    []byte
-	peerPub    [32]byte
+	hsMu    sync.Mutex
+	hsChain []byte
+	peerPub [32]byte
 
 	metrics atomic.Pointer[metrics.BackendMetrics]
 }
 
 type wgConfig struct {
-	Mode       string
-	ListenAddr string
-	RemoteAddr string
-	PrivateKey string
-	PeerPublicKey string
-	PeerPort int
+	Mode                string
+	ListenAddr          string
+	RemoteAddr          string
+	PrivateKey          string
+	PeerPublicKey       string
+	PeerPort            int
 	PersistentKeepalive time.Duration
-	AllowedIPs []string
+	AllowedIPs          []string
 }
 
 const (
@@ -524,7 +524,9 @@ func decodeHex(s string) ([]byte, error) {
 func newWireGuardBackend(cfg Config) Backend {
 	args := cfg.ExtraArgs
 	getArg := func(i int) string {
-		if i < len(args) { return args[i] }
+		if i < len(args) {
+			return args[i]
+		}
 		return ""
 	}
 	keepalive := 25 * time.Second
@@ -536,13 +538,13 @@ func newWireGuardBackend(cfg Config) Backend {
 	return &wireGuardBackend{
 		name: cfg.Name,
 		cfg: wgConfig{
-			Mode:       getArg(0),
-			ListenAddr: cfg.ListenAddress,
-			RemoteAddr: getArg(1),
-			PrivateKey: getArg(2),
-			PeerPublicKey: getArg(3),
+			Mode:                getArg(0),
+			ListenAddr:          cfg.ListenAddress,
+			RemoteAddr:          getArg(1),
+			PrivateKey:          getArg(2),
+			PeerPublicKey:       getArg(3),
 			PersistentKeepalive: keepalive,
-			AllowedIPs: cfg.RoutingRules,
+			AllowedIPs:          cfg.RoutingRules,
 		},
 		readyCh: make(chan struct{}),
 		stopCh:  make(chan struct{}),

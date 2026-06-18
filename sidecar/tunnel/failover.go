@@ -30,11 +30,11 @@ import (
 // IsDegraded() and in metrics. Degraded mode is cleared when the primary
 // backend recovers.
 type failoverBackend struct {
-	cfg       Config
-	backends  []Backend
-	ready     chan struct{}
-	stopped   bool
-	mu        sync.Mutex
+	cfg      Config
+	backends []Backend
+	ready    chan struct{}
+	stopped  bool
+	mu       sync.Mutex
 
 	// current indexes into backends for the currently active backend.
 	// Accessed atomically from producers and consumers.
@@ -56,15 +56,15 @@ type failoverBackend struct {
 // describes the aggregate itself; backends are supplied separately.
 func newFailoverBackend(cfg Config, backends ...Backend) *failoverBackend {
 	return &failoverBackend{
-		cfg:    cfg,
+		cfg:      cfg,
 		backends: backends,
-		ready:  make(chan struct{}),
-		health: make([]int32, len(backends)),
+		ready:    make(chan struct{}),
+		health:   make([]int32, len(backends)),
 	}
 }
 
-func (b *failoverBackend) Name() string { return "failover://" + b.cfg.Name }
-func (b *failoverBackend) Type() string { return "failover" }
+func (b *failoverBackend) Name() string           { return "failover://" + b.cfg.Name }
+func (b *failoverBackend) Type() string           { return "failover" }
 func (b *failoverBackend) Ready() <-chan struct{} { return b.ready }
 
 // Start launches all child backends concurrently. The aggregate is

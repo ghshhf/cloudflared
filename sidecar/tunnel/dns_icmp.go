@@ -58,15 +58,15 @@ type dnsTunnelBackend struct {
 // newDNSTunnelBackend creates a DNS tunnel backend.
 func newDNSTunnelBackend(cfg Config) *dnsTunnelBackend {
 	return &dnsTunnelBackend{
-		cfg:         cfg,
-		ready:       make(chan struct{}),
-		enc:         base32.NewEncoding("abcdefghijklmnopqrstuvwxyz234567"),
+		cfg:          cfg,
+		ready:        make(chan struct{}),
+		enc:          base32.NewEncoding("abcdefghijklmnopqrstuvwxyz234567"),
 		tunnelDomain: cfg.TunnelDomain,
 	}
 }
 
-func (b *dnsTunnelBackend) Name() string { return "dns-tunnel://" + b.cfg.Name }
-func (b *dnsTunnelBackend) Type() string { return "dns-tunnel" }
+func (b *dnsTunnelBackend) Name() string           { return "dns-tunnel://" + b.cfg.Name }
+func (b *dnsTunnelBackend) Type() string           { return "dns-tunnel" }
 func (b *dnsTunnelBackend) Ready() <-chan struct{} { return b.ready }
 
 func (b *dnsTunnelBackend) Start(ctx context.Context) error {
@@ -170,7 +170,7 @@ func (b *dnsTunnelBackend) parseDNSResponse(resp []byte) []byte {
 			break
 		}
 		rrType := binary.BigEndian.Uint16(resp[pos:])
-		pos += 8 // TYPE + CLASS
+		pos += 8                                // TYPE + CLASS
 		_ = binary.BigEndian.Uint32(resp[pos:]) // TTL
 		pos += 4
 		rdLen := int(binary.BigEndian.Uint16(resp[pos:]))
@@ -297,15 +297,15 @@ func (b *dnsTunnelBackend) buildDNSQuery(subdomain string) []byte {
 	// Header.
 	binary.BigEndian.PutUint16(msg[0:2], txID)
 	binary.BigEndian.PutUint16(msg[2:4], 0x0100) // flags: standard query
-	binary.BigEndian.PutUint16(msg[4:6], 1)       // 1 question
-	binary.BigEndian.PutUint16(msg[6:8], 0)       // 0 answers
-	binary.BigEndian.PutUint16(msg[8:10], 0)      // 0 authority
-	binary.BigEndian.PutUint16(msg[10:12], 0)     // 0 additional
+	binary.BigEndian.PutUint16(msg[4:6], 1)      // 1 question
+	binary.BigEndian.PutUint16(msg[6:8], 0)      // 0 answers
+	binary.BigEndian.PutUint16(msg[8:10], 0)     // 0 authority
+	binary.BigEndian.PutUint16(msg[10:12], 0)    // 0 additional
 
 	// Question section.
 	copy(msg[12:], fullName)
 	pos := 12 + len(fullName)
-	binary.BigEndian.PutUint16(msg[pos:pos+2], 16) // TXT record
+	binary.BigEndian.PutUint16(msg[pos:pos+2], 16)  // TXT record
 	binary.BigEndian.PutUint16(msg[pos+2:pos+4], 1) // class: IN
 
 	return msg
@@ -360,7 +360,7 @@ type icmpTunnelBackend struct {
 	// Shared secret for XOR keystream.
 	secret uint32
 	// Local echo ID for identification.
-	echoID uint16
+	echoID  uint16
 	echoSeq atomic.Uint32
 }
 
@@ -375,8 +375,8 @@ func newICMPTunnelBackend(cfg Config) *icmpTunnelBackend {
 	}
 }
 
-func (b *icmpTunnelBackend) Name() string { return "icmp-tunnel://" + b.cfg.Name }
-func (b *icmpTunnelBackend) Type() string { return "icmp-tunnel" }
+func (b *icmpTunnelBackend) Name() string           { return "icmp-tunnel://" + b.cfg.Name }
+func (b *icmpTunnelBackend) Type() string           { return "icmp-tunnel" }
 func (b *icmpTunnelBackend) Ready() <-chan struct{} { return b.ready }
 
 // BuildICMPEchoRequest builds an ICMP echo request packet with tunneled data.

@@ -13,11 +13,11 @@ type mockBackend struct {
 	typ  string
 }
 
-func (m *mockBackend) Name() string                      { return m.name }
-func (m *mockBackend) Type() string                      { return m.typ }
-func (m *mockBackend) Start(_ context.Context) error      { return nil }
-func (m *mockBackend) Stop(_ context.Context) error        { return nil }
-func (m *mockBackend) Ready() <-chan struct{}              { ch := make(chan struct{}); close(ch); return ch }
+func (m *mockBackend) Name() string                  { return m.name }
+func (m *mockBackend) Type() string                  { return m.typ }
+func (m *mockBackend) Start(_ context.Context) error { return nil }
+func (m *mockBackend) Stop(_ context.Context) error  { return nil }
+func (m *mockBackend) Ready() <-chan struct{}        { ch := make(chan struct{}); close(ch); return ch }
 
 // ---- Config validation ------------------------------------------------------
 

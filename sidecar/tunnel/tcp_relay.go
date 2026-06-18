@@ -41,8 +41,8 @@ func newTCPRelayBackend(cfg Config) *tcpRelayBackend {
 	}
 }
 
-func (b *tcpRelayBackend) Name() string { return "tcp-relay://" + b.cfg.Name }
-func (b *tcpRelayBackend) Type() string { return TypeTCPRelay }
+func (b *tcpRelayBackend) Name() string           { return "tcp-relay://" + b.cfg.Name }
+func (b *tcpRelayBackend) Type() string           { return TypeTCPRelay }
 func (b *tcpRelayBackend) Ready() <-chan struct{} { return b.ready }
 
 func (b *tcpRelayBackend) Start(ctx context.Context) error {

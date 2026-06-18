@@ -84,18 +84,18 @@ func (c *CloudflaredComponent) Init(ctx context.Context, cfg Config) *SsiError {
 	// Keeping the two types separate lets the IPC wire format stay
 	// stable even as we add more backend-specific knobs.
 	tcfg := tunnel.Config{
-		Type:         cfg.Backend,
-		Name:         cfg.Name,
-		OriginURL:    cfg.OriginURL,
-		CloudflareMode: cfg.Mode,
-		CloudflareBinary: cfg.BinaryPath,
-		ListenAddress: cfg.ListenAddress,
-		RelayTarget: cfg.RelayTarget,
-		ProxyListen: cfg.ProxyListen,
-		ExtraArgs:   cfg.ExtraArgs,
-		AccessHostname:    cfg.Hostname,
-		AccessDestination: cfg.Destination,
-		StartTimeoutSeconds:       float64(cfg.StartTimeout.Seconds()),
+		Type:                       cfg.Backend,
+		Name:                       cfg.Name,
+		OriginURL:                  cfg.OriginURL,
+		CloudflareMode:             cfg.Mode,
+		CloudflareBinary:           cfg.BinaryPath,
+		ListenAddress:              cfg.ListenAddress,
+		RelayTarget:                cfg.RelayTarget,
+		ProxyListen:                cfg.ProxyListen,
+		ExtraArgs:                  cfg.ExtraArgs,
+		AccessHostname:             cfg.Hostname,
+		AccessDestination:          cfg.Destination,
+		StartTimeoutSeconds:        float64(cfg.StartTimeout.Seconds()),
 		ShutdownGracePeriodSeconds: float64(cfg.ShutdownGracePeriod.Seconds()),
 	}
 
@@ -292,7 +292,9 @@ func (c *CloudflaredComponent) String() string {
 func (c *CloudflaredComponent) IsTCPRelay() bool { return c.GetBackendType() == tunnel.TypeTCPRelay }
 
 // IsCloudflare returns true for the default cloudflared backend.
-func (c *CloudflaredComponent) IsCloudflare() bool { return c.GetBackendType() == tunnel.TypeCloudflare }
+func (c *CloudflaredComponent) IsCloudflare() bool {
+	return c.GetBackendType() == tunnel.TypeCloudflare
+}
 
 // IsSkyNetP2P returns true for the peer-to-peer backend.
 func (c *CloudflaredComponent) IsSkyNetP2P() bool { return c.GetBackendType() == tunnel.TypeSkyNetP2P }

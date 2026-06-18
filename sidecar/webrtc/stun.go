@@ -11,22 +11,22 @@ import (
 
 // STUN message types (RFC 5389).
 const (
-	STUNBindingRequest     = 0x0001
-	STUNBindingResponse    = 0x0101
-	STUNBindingError       = 0x0111
-	STUNBindingIndication  = 0x0011
+	STUNBindingRequest    = 0x0001
+	STUNBindingResponse   = 0x0101
+	STUNBindingError      = 0x0111
+	STUNBindingIndication = 0x0011
 
 	// STUN attribute types.
-	AttrMappedAddress      = 0x0001
-	AttrXORMappedAddress   = 0x0020
-	AttrUsername           = 0x0006
-	AttrMessageIntegrity  = 0x0008
-	AttrFingerprint        = 0x8028
-	AttrICEControlled      = 0x8029
-	AttrICEControlling     = 0x802A
-	AttrPriority           = 0x0024
-	AttrUseCandidate      = 0x0025
-	AttrNetworkInfo        = 0x802F
+	AttrMappedAddress    = 0x0001
+	AttrXORMappedAddress = 0x0020
+	AttrUsername         = 0x0006
+	AttrMessageIntegrity = 0x0008
+	AttrFingerprint      = 0x8028
+	AttrICEControlled    = 0x8029
+	AttrICEControlling   = 0x802A
+	AttrPriority         = 0x0024
+	AttrUseCandidate     = 0x0025
+	AttrNetworkInfo      = 0x802F
 )
 
 // stunMagicCookie is the RFC 5389 magic cookie value.
@@ -42,9 +42,9 @@ func stunMagicCookieXOR(i int) uint16 {
 
 // STUN message header (20 bytes).
 type stunHeader struct {
-	Type       uint16
-	Length     uint16 // payload length (after header), not including header
-	MagicCookie uint32
+	Type          uint16
+	Length        uint16 // payload length (after header), not including header
+	MagicCookie   uint32
 	TransactionID [12]byte
 }
 
@@ -97,10 +97,10 @@ func BuildSTUNBindingRequest() ([]byte, error) {
 	if _, err := rand.Read(tid[:]); err != nil {
 		return nil, err
 	}
-	msg := make([]byte, 20+4) // header + fingerprint attribute
+	msg := make([]byte, 28) // header(20) + fingerprint attr(8)
 	binary.BigEndian.PutUint16(msg[0:2], STUNBindingRequest)
 	// length: fingerprint attribute = 8 bytes (4 header + 4 value)
-	binary.BigEndian.PutUint16(msg[2:4], 8)
+	binary.BigEndian.PutUint16(msg[2:4], 8) // payload length = fingerprint attr (8 bytes)
 	binary.BigEndian.PutUint32(msg[4:8], stunMagicCookie)
 	copy(msg[8:20], tid[:])
 

@@ -50,12 +50,22 @@ type PoolStatsProvider interface {
 	PoolStats() map[string]any
 }
 
+// Controller is the start/stop interface the dashboard calls when a user
+// clicks the start/stop buttons. The sidecar's component loop passes itself
+// as the implementation.
+type Controller interface {
+	Start(ctx context.Context) error
+	Stop(ctx context.Context) error
+	State() string
+}
+
 // Server wraps an http.Server along with the component so the
 // dashboard can render its state.
 type Server struct {
 	addr      string
 	component Component
 	pool      PoolStatsProvider
+	ctrl      Controller
 	version   string
 	authToken string
 
@@ -79,6 +89,10 @@ func (s *Server) SetAuthToken(token string) { s.authToken = token }
 // SetPoolStatsProvider registers a proxy pool stats provider. Must be
 // called before Start() to take effect.
 func (s *Server) SetPoolStatsProvider(p PoolStatsProvider) { s.pool = p }
+
+// SetController registers the start/stop controller. Required for the
+// /api/start and /api/stop endpoints to work; without it they return 501.
+func (s *Server) SetController(c Controller) { s.ctrl = c }
 
 // IsEnabled reports whether the server has an address and will serve
 // on Start().
@@ -152,13 +166,13 @@ func (s *Server) indexHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data := map[string]any{
-		"name":        s.component.Name(),
-		"version":     s.version,
-		"state":       s.component.State(),
-		"backend":     s.component.BackendType(),
+		"name":         s.component.Name(),
+		"version":      s.version,
+		"state":        s.component.State(),
+		"backend":      s.component.BackendType(),
 		"backend_name": s.component.BackendName(),
-		"lines":       s.component.RecentLines(32),
-		"now":         time.Now().UTC().Format(time.RFC3339),
+		"lines":        s.component.RecentLines(32),
+		"now":          time.Now().UTC().Format(time.RFC3339),
 	}
 	if err := indexTmpl.Execute(w, data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -168,11 +182,11 @@ func (s *Server) indexHandler(w http.ResponseWriter, r *http.Request) {
 func (s *Server) statusHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"name":        s.component.Name(),
-		"state":       s.component.State(),
-		"backend":     s.component.BackendType(),
+		"name":         s.component.Name(),
+		"state":        s.component.State(),
+		"backend":      s.component.BackendType(),
 		"backend_name": s.component.BackendName(),
-		"recent_logs": s.component.RecentLines(32),
+		"recent_logs":  s.component.RecentLines(32),
 	})
 }
 
@@ -181,12 +195,36 @@ func (s *Server) startHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
 		return
 	}
-	// Start is implemented by the caller; we provide a placeholder
-	// that says OK — the sidecar uses the IPC bus to trigger start
-	// externally. This hook lets future work wire up an internal
-	// start command.
+	if s.ctrl == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotImplemented)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"status": "error",
+			"action": "no controller registered — set via SetController()",
+		})
+		return
+	}
+
+	// Create a short-lived context so the request doesn't hang forever.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := s.ctrl.Start(ctx); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"status": "error",
+			"action": fmt.Sprintf("start failed: %v", err),
+		})
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok", "action": "start requested — see SkyNet runtime"})
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"status": "ok",
+		"action": "started",
+		"state":  s.ctrl.State(),
+	})
 }
 
 func (s *Server) stopHandler(w http.ResponseWriter, r *http.Request) {
@@ -194,8 +232,35 @@ func (s *Server) stopHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
 		return
 	}
+	if s.ctrl == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotImplemented)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"status": "error",
+			"action": "no controller registered — set via SetController()",
+		})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := s.ctrl.Stop(ctx); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"status": "error",
+			"action": fmt.Sprintf("stop failed: %v", err),
+		})
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok", "action": "stop requested — see SkyNet runtime"})
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"status": "ok",
+		"action": "stopped",
+		"state":  s.ctrl.State(),
+	})
 }
 
 func (s *Server) logsHandler(w http.ResponseWriter, r *http.Request) {

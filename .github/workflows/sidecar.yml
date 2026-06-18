@@ -1,18 +1,75 @@
-on: [push, pull_request]
 name: Sidecar Check
+on:
+  push:
+    branches: [master, main]
+    paths: ['sidecar/**', '.github/workflows/sidecar.yml']
+  pull_request:
+    branches: [master, main]
+    paths: ['sidecar/**']
+  schedule:
+    # Daily check to catch regressions from upstream cloudflared merges
+    - cron: '0 6 * * *'
+
+env:
+  GO_VERSION: '1.25.x'
+
 jobs:
   sidecar-check:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sidecar
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+
     - name: Install Go
       uses: actions/setup-go@v5
       with:
-        go-version: 1.25.x
+        go-version: ${{ env.GO_VERSION }}
+        cache-dependency-path: sidecar/go.sum
+
     - name: Build
-      run: cd sidecar && go build ./...
-    - name: Vet
-      run: cd sidecar && go vet ./...
-    - name: Test
-      run: cd sidecar && go test ./...
+      run: go build ./...
+
+    - name: Cross-platform build check
+      run: |
+        echo "=== linux/amd64 ===" && GOOS=linux GOARCH=amd64 go build -o /dev/null .
+        echo "=== darwin/amd64 ===" && GOOS=darwin GOARCH=amd64 go build -o /dev/null .
+        echo "=== windows/amd64 ===" && GOOS=windows GOARCH=amd64 go build -o /dev/null .
+
+    - name: go vet
+      run: go vet ./...
+
+    - name: Unit tests
+      run: go test -count=1 -v ./...
+
+    - name: Test coverage
+      run: |
+        go test -count=1 -coverprofile=coverage.out ./...
+        go tool cover -func=coverage.out | tail -5
+
+    - name: Build utilities
+      run: go build -o /dev/null ./cmd/swbn-pkg/
+
+  smoke-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sidecar
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache-dependency-path: sidecar/go.sum
+
+    - name: Run smoke test
+      run: bash smoke_test.sh
+      env:
+        VERBOSE: 1

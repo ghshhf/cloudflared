@@ -158,8 +158,8 @@ func (c Config) Validate() error {
 type SmartRouter struct {
 	cfg Config
 
-	mu      sync.RWMutex
-	rules   []Rule // sorted by priority descending
+	mu       sync.RWMutex
+	rules    []Rule // sorted by priority descending
 	backends map[string]Backend
 
 	// round-robin state
@@ -331,8 +331,8 @@ func (r *SmartRouter) bestP2PLocked() string {
 
 func (r *SmartRouter) bestLatencyLocked() string {
 	type candidate struct {
-		name    string
-		p99     float64
+		name      string
+		p99       float64
 		available bool
 	}
 	var best candidate

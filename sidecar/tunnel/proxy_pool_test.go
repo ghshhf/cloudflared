@@ -845,4 +845,3 @@ func BenchmarkExtractVMessHost(b *testing.B) {
 		_ = extractVMessHost(encoded)
 	}
 }
-

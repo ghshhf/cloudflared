@@ -28,13 +28,13 @@ import (
 // to active DTLS connections. Each unique client source address gets its own
 // DTLS session.
 type dtlsBackend struct {
-	name   string
-	cfg    dtlsConfig
-	ln     *net.UDPConn
-	client *tls.Conn // for client mode only
+	name    string
+	cfg     dtlsConfig
+	ln      *net.UDPConn
+	client  *tls.Conn // for client mode only
 	readyCh chan struct{}
 	stopCh  chan struct{}
-	wg     sync.WaitGroup
+	wg      sync.WaitGroup
 
 	// server-side: map of peer address to DTLS connection
 	peers   map[string]*tls.Conn
@@ -312,13 +312,13 @@ func newDTLSBackend(cfg Config) Backend {
 	b := &dtlsBackend{
 		name: cfg.Name,
 		cfg: dtlsConfig{
-			Mode:              getArg(0),
-			ListenAddr:        cfg.ListenAddress,
-			RemoteAddr:        getArg(1),
-			CertFile:          getArg(2),
-			KeyFile:           getArg(3),
+			Mode:               getArg(0),
+			ListenAddr:         cfg.ListenAddress,
+			RemoteAddr:         getArg(1),
+			CertFile:           getArg(2),
+			KeyFile:            getArg(3),
 			InsecureSkipVerify: false,
-			MTU:              mtu,
+			MTU:                mtu,
 		},
 		readyCh: make(chan struct{}),
 		stopCh:  make(chan struct{}),

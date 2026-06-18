@@ -38,12 +38,12 @@ import (
 // failover through the SkyNet tunnel layer.
 
 type rtspBackend struct {
-	name   string
-	cfg    rtspConfig
-	ln     net.Listener
+	name    string
+	cfg     rtspConfig
+	ln      net.Listener
 	readyCh chan struct{}
 	stopCh  chan struct{}
-	wg     sync.WaitGroup
+	wg      sync.WaitGroup
 	metrics atomic.Pointer[metrics.BackendMetrics]
 }
 
@@ -299,12 +299,12 @@ func (b *rtspBackend) rtspUpstreamAddr() string {
 // ---- RTMP Backend (raw TCP relay) ---
 
 type rtmpBackend struct {
-	name   string
-	cfg    rtspConfig
-	ln     net.Listener
+	name    string
+	cfg     rtspConfig
+	ln      net.Listener
 	readyCh chan struct{}
 	stopCh  chan struct{}
-	wg     sync.WaitGroup
+	wg      sync.WaitGroup
 	metrics atomic.Pointer[metrics.BackendMetrics]
 }
 

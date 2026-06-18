@@ -45,9 +45,9 @@ func (c *Counter) Value() uint64    { return atomic.LoadUint64((*uint64)(c)) }
 // Gauge is a 64-bit signed gauge with atomic store/inc/dec.
 type Gauge int64
 
-func (g *Gauge) Set(v int64)   { atomic.StoreInt64((*int64)(g), v) }
+func (g *Gauge) Set(v int64)     { atomic.StoreInt64((*int64)(g), v) }
 func (g *Gauge) Add(delta int64) { atomic.AddInt64((*int64)(g), delta) }
-func (g *Gauge) Value() int64   { return atomic.LoadInt64((*int64)(g)) }
+func (g *Gauge) Value() int64    { return atomic.LoadInt64((*int64)(g)) }
 
 // Histogram maintains a sliding window of samples and computes approximate
 // percentiles (p50, p75, p90, p99) without external dependencies.
@@ -108,7 +108,7 @@ type BackendMetrics struct {
 	Available Gauge
 
 	// Timestamps
-	LastErrorAt   int64 // unix nano, 0 if no error
+	LastErrorAt    int64 // unix nano, 0 if no error
 	LastFailoverAt int64
 }
 
@@ -134,8 +134,8 @@ func (c *Collector) ForBackend(name string) *BackendMetrics {
 		return m
 	}
 	m := &BackendMetrics{
-		Name:     name,
-		Latency:  NewHistogram(200),
+		Name:      name,
+		Latency:   NewHistogram(200),
 		Available: Gauge(1),
 	}
 	c.backends[name] = m
@@ -330,7 +330,7 @@ func SetAvailable(backendName string, up bool) {
 //	// do work ...
 //	tracker.Done()
 type ConnTracker struct {
-	name string
+	name  string
 	gauge *Gauge
 }
 
@@ -364,8 +364,8 @@ func FormatBandwidth(bytesPerSec float64) string {
 // RoutingDecision is the result of the routing algorithm — which backend
 // to use and why.
 type RoutingDecision struct {
-	Backend  string
-	Reason   string // human-readable: "lowest_latency", "only_healthy", "prefer_p2p"
+	Backend    string
+	Reason     string // human-readable: "lowest_latency", "only_healthy", "prefer_p2p"
 	LatencyP99 float64
 	Available  bool
 }
@@ -393,7 +393,7 @@ func BestBackend(preferP2P bool) RoutingDecision {
 			name:    name,
 			latency: m.Latency.Percentile(0.99),
 			avail:   true,
-			isP2P:    strings.Contains(name, "p2p") || strings.Contains(name, "skynet"),
+			isP2P:   strings.Contains(name, "p2p") || strings.Contains(name, "skynet"),
 		})
 	}
 
@@ -406,10 +406,10 @@ func BestBackend(preferP2P bool) RoutingDecision {
 		for _, c := range candidates {
 			if c.isP2P {
 				return RoutingDecision{
-					Backend:   c.name,
-					Reason:    "prefer_p2p",
+					Backend:    c.name,
+					Reason:     "prefer_p2p",
 					LatencyP99: c.latency,
-					Available: true,
+					Available:  true,
 				}
 			}
 		}
@@ -426,6 +426,6 @@ func BestBackend(preferP2P bool) RoutingDecision {
 		Backend:    best.name,
 		Reason:     "lowest_latency",
 		LatencyP99: best.latency,
-		Available: true,
+		Available:  true,
 	}
 }

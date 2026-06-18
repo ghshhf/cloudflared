@@ -40,8 +40,8 @@ func newSOCKS5Backend(cfg Config) *socks5Backend {
 	}
 }
 
-func (b *socks5Backend) Name() string { return "socks5://" + b.cfg.Name }
-func (b *socks5Backend) Type() string { return TypeSOCKS5 }
+func (b *socks5Backend) Name() string           { return "socks5://" + b.cfg.Name }
+func (b *socks5Backend) Type() string           { return TypeSOCKS5 }
 func (b *socks5Backend) Ready() <-chan struct{} { return b.ready }
 
 func (b *socks5Backend) Start(ctx context.Context) error {

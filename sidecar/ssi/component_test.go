@@ -130,10 +130,10 @@ func TestStopWhenNotRunning(t *testing.T) {
 func TestTCPRelayLifecycle(t *testing.T) {
 	c := NewCloudflaredComponent()
 	cfg := Config{
-		Name:         "relay-test",
-		Mode:         "quick",
+		Name:          "relay-test",
+		Mode:          "quick",
 		Backend:       "tcp-relay",
-		OriginURL:    "127.0.0.1:0", // 任何地址，但 Start 会 fail fast。
+		OriginURL:     "127.0.0.1:0", // 任何地址，但 Start 会 fail fast。
 		ListenAddress: "127.0.0.1:0",
 	}
 	if ssiErr := c.Init(context.Background(), cfg); ssiErr != nil {
@@ -193,12 +193,12 @@ func TestRingBuffer(t *testing.T) {
 func TestStartCtxCancelledDoesNotHang(t *testing.T) {
 	c := NewCloudflaredComponent()
 	cfg := Config{
-		Name:         "cancel-test",
-		Mode:         "quick",
+		Name:          "cancel-test",
+		Mode:          "quick",
 		Backend:       "tcp-relay",
-		OriginURL:    "127.0.0.1:0",
+		OriginURL:     "127.0.0.1:0",
 		ListenAddress: "127.0.0.1:0",
-		StartTimeout: 10 * time.Second,
+		StartTimeout:  10 * time.Second,
 	}
 	if ssiErr := c.Init(context.Background(), cfg); ssiErr != nil {
 		t.Fatalf("init failed: %v", ssiErr)

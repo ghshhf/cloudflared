@@ -33,12 +33,12 @@ import (
 // Use cases: Encrypted file transfer, SFTP gateway through SkyNet tunnel,
 // remote filesystem access via relay.
 type sftpBackend struct {
-	name   string
-	cfg    sftpConfig
-	ln     net.Listener
+	name    string
+	cfg     sftpConfig
+	ln      net.Listener
 	readyCh chan struct{}
 	stopCh  chan struct{}
-	wg     sync.WaitGroup
+	wg      sync.WaitGroup
 	metrics atomic.Pointer[metrics.BackendMetrics]
 
 	sshConfig ssh.ServerConfig

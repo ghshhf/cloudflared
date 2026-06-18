@@ -1,0 +1,21 @@
+# Build artifacts
+*.exe
+*.test
+coverage.out
+coverage.html
+skynet-tunnel
+skynet-tunnel-*
+cloudflared-sidecar
+cloudflared-sidecar-*
+swbn-pkg
+swbn-pkg-*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

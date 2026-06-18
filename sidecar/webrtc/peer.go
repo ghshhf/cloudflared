@@ -17,7 +17,7 @@ import (
 
 // DataChannelMessageType constants (RFC 8832).
 const (
-	DCMTFull   = 0x00 // Full ACK
+	DCMTFull    = 0x00 // Full ACK
 	DCMTPartial = 0x40 // Partial message
 	DCMTControl = 0x02 // Control message
 	DCMTReset   = 0x03 // Reset the stream
@@ -26,18 +26,18 @@ const (
 // DataChannel is a bidirectional reliable ordered byte stream over DTLS,
 // implementing the WebRTC DataChannel protocol (RFC 8832).
 type DataChannel struct {
-	label    string
-	protoID  string
-	isOpen   atomic.Bool
-	id       uint16
+	label   string
+	protoID string
+	isOpen  atomic.Bool
+	id      uint16
 
 	mu       sync.RWMutex
 	outOrder []byte // pending outbound data (partial message)
 	outSeq   uint16 // outbound message sequence number
 
-	inBuf    []byte          // inbound message buffer
-	inSeq    uint16          // inbound message sequence number
-	inPartial bool           // waiting for rest of partial message
+	inBuf     []byte // inbound message buffer
+	inSeq     uint16 // inbound message sequence number
+	inPartial bool   // waiting for rest of partial message
 
 	// Underlying reliable ordered transport (implemented by DTLS wrapper).
 	transport io.ReadWriter
@@ -48,9 +48,9 @@ type DataChannel struct {
 // NewDataChannel creates a new DataChannel with the given label and protocol ID.
 func NewDataChannel(label, protoID string, id uint16, transport io.ReadWriter) *DataChannel {
 	dc := &DataChannel{
-		label:    label,
-		protoID:  protoID,
-		id:       id,
+		label:     label,
+		protoID:   protoID,
+		id:        id,
 		transport: transport,
 	}
 	dc.isOpen.Store(true)
@@ -134,10 +134,10 @@ func (dc *DataChannel) Close() error {
 
 // ICE candidate types.
 const (
-	ICECandidateTypeHost     = 0
-	ICECandidateTypeSrflx    = 1 // server reflexive (from STUN)
-	ICECandidateTypePrflx    = 2 // peer reflexive
-	ICECandidateTypeRelay    = 3 // relayed (from TURN)
+	ICECandidateTypeHost  = 0
+	ICECandidateTypeSrflx = 1 // server reflexive (from STUN)
+	ICECandidateTypePrflx = 2 // peer reflexive
+	ICECandidateTypeRelay = 3 // relayed (from TURN)
 )
 
 // ICECandidate represents a candidate for ICE negotiation.
@@ -153,7 +153,7 @@ type ICECandidate struct {
 // ICEAgent manages the ICE negotiation process.
 // It gathers candidates, exchanges them via signaling, and selects the best pair.
 type ICEAgent struct {
-	mu        sync.RWMutex
+	mu         sync.RWMutex
 	candidates []ICECandidate
 	localUfrag string
 	localPwd   string
@@ -211,10 +211,10 @@ func (a *ICEAgent) GatherHostCandidates() error {
 			}
 			a.mu.Lock()
 			a.candidates = append(a.candidates, ICECandidate{
-				IP:     ipStr,
-				Port:   0, // port 0 means OS will assign
-				Proto:  "udp",
-				Type:   ICECandidateTypeHost,
+				IP:       ipStr,
+				Port:     0, // port 0 means OS will assign
+				Proto:    "udp",
+				Type:     ICECandidateTypeHost,
 				Priority: 2130706431, // host candidates: high priority
 			})
 			a.mu.Unlock()
@@ -231,10 +231,10 @@ func (a *ICEAgent) AddServerReflexiveCandidate(ip net.IP, port int) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.candidates = append(a.candidates, ICECandidate{
-		IP:      ip.String(),
-		Port:    port,
-		Proto:   "udp",
-		Type:    ICECandidateTypeSrflx,
+		IP:       ip.String(),
+		Port:     port,
+		Proto:    "udp",
+		Type:     ICECandidateTypeSrflx,
 		Priority: 100, // lower than host
 	})
 }
@@ -332,8 +332,8 @@ const (
 
 // PreSharedKeyMode is DTLS with a pre-shared key (PSK) — no certificates needed.
 type PreSharedKeyMode struct {
-	PSK     []byte // pre-shared key (established via signaling)
-	PSKID   []byte
+	PSK   []byte // pre-shared key (established via signaling)
+	PSKID []byte
 }
 
 // NewPSKMode creates a PSK mode with a random 32-byte key.
@@ -363,17 +363,17 @@ type WebRTCBackend struct {
 	listener net.Listener
 	isOpen   atomic.Bool
 
-	ice        *ICEAgent
-	signaling  *SimpleSignalingServer
-	transport  io.ReadWriter // DTLS-wrapped connection
-	dc         *DataChannel
+	ice       *ICEAgent
+	signaling *SimpleSignalingServer
+	transport io.ReadWriter // DTLS-wrapped connection
+	dc        *DataChannel
 }
 
 // STUNConfig holds the configuration for the WebRTC backend.
 type STUNConfig struct {
-	ListenAddr  string // TCP listen address for signaling
+	ListenAddr  string   // TCP listen address for signaling
 	STUNServers []string // STUN server addresses for NAT discovery
-	Label       string // DataChannel label
+	Label       string   // DataChannel label
 	ProtocolID  string
 	PSK         []byte // pre-shared key for DTLS (optional)
 }
@@ -389,8 +389,8 @@ func NewWebRTCBackend(cfg STUNConfig) *WebRTCBackend {
 	}
 }
 
-func (b *WebRTCBackend) Name() string { return "webrtc://" + b.cfg.Label }
-func (b *WebRTCBackend) Type() string { return "webrtc" }
+func (b *WebRTCBackend) Name() string           { return "webrtc://" + b.cfg.Label }
+func (b *WebRTCBackend) Type() string           { return "webrtc" }
 func (b *WebRTCBackend) Ready() <-chan struct{} { return b.ready }
 
 // Start begins gathering ICE candidates and listening for incoming connections.

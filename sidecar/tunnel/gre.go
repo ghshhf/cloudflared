@@ -29,16 +29,16 @@ import (
 type packetTunnelBackend struct {
 	cfg Config
 
-	mu      sync.Mutex
+	mu       sync.Mutex
 	listener net.Listener
 	ready    chan struct{}
 	started  bool
 	stopped  bool
 
 	// Local TUN settings
-	tunIP   net.IP // virtual IP assigned to us
-	gwIP    net.IP // default gateway on remote side
-	greKey  uint32 // GRE key for demultiplexing
+	tunIP  net.IP // virtual IP assigned to us
+	gwIP   net.IP // default gateway on remote side
+	greKey uint32 // GRE key for demultiplexing
 
 	// Statistics
 	stats packet.PacketStats
@@ -47,14 +47,14 @@ type packetTunnelBackend struct {
 // newPacketTunnelBackend creates a GRE-over-TCP packet tunnel backend.
 func newPacketTunnelBackend(cfg Config) *packetTunnelBackend {
 	return &packetTunnelBackend{
-		cfg:   cfg,
-		ready: make(chan struct{}),
+		cfg:    cfg,
+		ready:  make(chan struct{}),
 		greKey: 0xC0FFEE42, // default GRE key
 	}
 }
 
-func (b *packetTunnelBackend) Name() string { return "packet-tunnel://" + b.cfg.Name }
-func (b *packetTunnelBackend) Type() string { return "packet-tunnel" }
+func (b *packetTunnelBackend) Name() string           { return "packet-tunnel://" + b.cfg.Name }
+func (b *packetTunnelBackend) Type() string           { return "packet-tunnel" }
 func (b *packetTunnelBackend) Ready() <-chan struct{} { return b.ready }
 
 func (b *packetTunnelBackend) Start(ctx context.Context) error {
@@ -245,14 +245,14 @@ type greBackend struct {
 // newGREBackend creates a GRE-over-TCP backend.
 func newGREBackend(cfg Config) *greBackend {
 	return &greBackend{
-		cfg:   cfg,
-		ready: make(chan struct{}),
+		cfg:    cfg,
+		ready:  make(chan struct{}),
 		greKey: 0xC0FFEE42,
 	}
 }
 
-func (b *greBackend) Name() string { return "gre://" + b.cfg.Name }
-func (b *greBackend) Type() string { return "gre" }
+func (b *greBackend) Name() string           { return "gre://" + b.cfg.Name }
+func (b *greBackend) Type() string           { return "gre" }
 func (b *greBackend) Ready() <-chan struct{} { return b.ready }
 
 func (b *greBackend) Start(ctx context.Context) error {
@@ -334,8 +334,8 @@ func newUDPTunnelBackend(cfg Config) *udpTunnelBackend {
 	}
 }
 
-func (b *udpTunnelBackend) Name() string { return "udp-tunnel://" + b.cfg.Name }
-func (b *udpTunnelBackend) Type() string { return "udp-tunnel" }
+func (b *udpTunnelBackend) Name() string           { return "udp-tunnel://" + b.cfg.Name }
+func (b *udpTunnelBackend) Type() string           { return "udp-tunnel" }
 func (b *udpTunnelBackend) Ready() <-chan struct{} { return b.ready }
 
 func (b *udpTunnelBackend) Start(ctx context.Context) error {

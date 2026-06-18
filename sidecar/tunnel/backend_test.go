@@ -8,10 +8,10 @@ import "testing"
 
 func TestNewBackend_knownTypes(t *testing.T) {
 	tests := []struct {
-		name      string
-		typeName  string
+		name       string
+		typeName   string
 		wantNonNil bool
-		wantErr   bool
+		wantErr    bool
 	}{
 		// empty → defaults to cloudflare
 		{"empty defaults to cloudflare", "", true, false},
@@ -60,7 +60,7 @@ func TestNewBackend_knownTypes(t *testing.T) {
 
 func TestBackend_TypeString(t *testing.T) {
 	tests := []struct {
-		typeName    string
+		typeName     string
 		expectedType string
 	}{
 		{"", TypeCloudflare},
@@ -127,9 +127,9 @@ func TestConfig_Defaults(t *testing.T) {
 
 func TestParseBackendList(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    string
-		want     []string
+		name  string
+		input string
+		want  []string
 	}{
 		{"empty string returns nil", "", nil},
 		{"single entry", "cloudflare", []string{"cloudflare"}},

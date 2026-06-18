@@ -2,16 +2,27 @@ package tunnel
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/cloudflare/cloudflared/sidecar/metrics"
 	"golang.org/x/crypto/ssh"
+)
+
+// ---- sentinel errors -----------------------------------------------------
+
+var (
+	errSSHNoAuth           = &backendErr{msg: "ssh-reverse: no auth method configured (need password or private_key)"}
+	errSSHParseFingerprint = &backendErr{msg: "ssh-reverse: invalid host key fingerprint format"}
 )
 
 // sshReverseBackend tunnels traffic through an SSH connection in reverse
@@ -32,12 +43,12 @@ import (
 //   - Keepalive to detect broken connections
 //   - Automatic reconnection on connection loss (if Reconnect=true)
 type sshReverseBackend struct {
-	name   string
-	cfg    sshConfig
-	client *ssh.Client
+	name    string
+	cfg     sshConfig
+	client  *ssh.Client
 	readyCh chan struct{}
 	stopCh  chan struct{}
-	wg     sync.WaitGroup
+	wg      sync.WaitGroup
 
 	metrics atomic.Pointer[metrics.BackendMetrics]
 }
@@ -68,6 +79,16 @@ type sshConfig struct {
 	Reconnect bool
 	// ReconnectInterval is the pause between reconnection attempts (default 5s)
 	ReconnectInterval time.Duration
+	// HostKeyFingerprint is the expected SHA256 base64-encoded host key fingerprint
+	// of the SSH server (e.g. "SHA256:abc123..."). When set, the client will
+	// verify the server's host key against this value. Leave empty to use
+	// InsecureSkipVerify.
+	HostKeyFingerprint string
+	// InsecureSkipVerify disables host key verification entirely. Only set this
+	// to true for testing or when you fully trust the network. If both
+	// HostKeyFingerprint and InsecureSkipVerify are unset/false, the backend
+	// will refuse to connect — you must choose one verification strategy.
+	InsecureSkipVerify bool
 }
 
 var _ Backend = (*sshReverseBackend)(nil)
@@ -94,10 +115,15 @@ func (b *sshReverseBackend) connectAndForward() error {
 		return err
 	}
 
+	hkCallback, err := b.hostKeyCallback()
+	if err != nil {
+		return err
+	}
+
 	config := &ssh.ClientConfig{
 		User:            b.cfg.Username,
 		Auth:            auths,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // TODO: pin host keys in production
+		HostKeyCallback: hkCallback,
 		Timeout:         15 * time.Second,
 	}
 
@@ -235,6 +261,75 @@ func (b *sshReverseBackend) keepaliveLoop() {
 	}
 }
 
+// hostKeyCallback returns an ssh.HostKeyCallback based on the backend's
+// configuration. It prefers, in order:
+//  1. HostKeyFingerprint — exact SHA256 fingerprint match
+//  2. InsecureSkipVerify — no verification (only for testing)
+//
+// If neither is set, it returns an error — failing closed is safer
+// than silently skipping verification.
+func (b *sshReverseBackend) hostKeyCallback() (ssh.HostKeyCallback, error) {
+	// 1. Fingerprint verification.
+	if b.cfg.HostKeyFingerprint != "" {
+		fingerprint := b.cfg.HostKeyFingerprint
+		// Normalise to "SHA256:" prefix for comparison.
+		fingerprint = normaliseFingerprint(fingerprint)
+
+		return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+			actual := ssh.FingerprintSHA256(key)
+			actual = strings.ToUpper(actual[:7]) + actual[7:]
+			if subtle.ConstantTimeCompare([]byte(actual), []byte(fingerprint)) == 1 {
+				return nil
+			}
+			return fmt.Errorf("ssh-reverse: host key fingerprint mismatch: "+
+				"expected %q, got %q for host %q", b.cfg.HostKeyFingerprint, actual, hostname)
+		}, nil
+	}
+
+	// 2. Explicit insecure bypass.
+	if b.cfg.InsecureSkipVerify {
+		return ssh.InsecureIgnoreHostKey(), nil
+	}
+
+	// 3. Nothing configured — fail closed.
+	return nil, fmt.Errorf("ssh-reverse: no host key verification configured; " +
+		"set HostKeyFingerprint or InsecureSkipVerify=true (unsafe)")
+}
+
+// normaliseFingerprint ensures the fingerprint has a "SHA256:" prefix.
+func normaliseFingerprint(fp string) string {
+	if !strings.HasPrefix(fp, "SHA256:") && !strings.HasPrefix(fp, "sha256:") {
+		fp = "SHA256:" + fp
+	}
+	return strings.ToUpper(fp[:7]) + fp[7:]
+}
+
+// parseFingerprint decodes a "SHA256:base64string" fingerprint to its raw hash bytes.
+func parseFingerprint(fp string) ([]byte, error) {
+	const prefix = "SHA256:"
+	if len(fp) < len(prefix)+2 {
+		return nil, errSSHParseFingerprint
+	}
+	encoded := fp[len(prefix):]
+	raw, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		// Try with padding.
+		missing := len(encoded) % 4
+		if missing > 0 {
+			encoded += strings.Repeat("=", 4-missing)
+		}
+		raw, err = base64.StdEncoding.DecodeString(encoded)
+		if err != nil {
+			return nil, fmt.Errorf("%w: base64 decode: %v", errSSHParseFingerprint, err)
+		}
+	}
+	if len(raw) != sha256.Size {
+		return nil, fmt.Errorf("%w: unexpected hash length %d (want %d)",
+			errSSHParseFingerprint, len(raw), sha256.Size)
+	}
+	return raw, nil
+}
+
 // authMethods returns the list of SSH authentication methods.
 func (b *sshReverseBackend) authMethods() ([]ssh.AuthMethod, error) {
 	var methods []ssh.AuthMethod
@@ -252,7 +347,7 @@ func (b *sshReverseBackend) authMethods() ([]ssh.AuthMethod, error) {
 	}
 
 	if len(methods) == 0 {
-		return nil, fmt.Errorf("ssh-reverse: no auth method configured (need password or private_key)")
+		return nil, errSSHNoAuth
 	}
 
 	return methods, nil
@@ -299,23 +394,25 @@ func newSSHReverseBackend(cfg Config) Backend {
 		return ""
 	}
 	sshCfg := sshConfig{
-		Server:            firstNonEmpty(getArg(0), cfg.OriginURL),
-		Username:          getArg(1),
-		Password:          getArg(2),
-		RemoteHost:        "127.0.0.1",
-		RemotePort:        int(cfg.GREKey),
-		LocalHost:         "127.0.0.1",
-		LocalPort:         80,
-		KeepaliveInterval: 30 * time.Second,
-		Reconnect:         false,
-		ReconnectInterval: 5 * time.Second,
+		Server:             firstNonEmpty(getArg(0), cfg.OriginURL),
+		Username:           getArg(1),
+		Password:           getArg(2),
+		RemoteHost:         "127.0.0.1",
+		RemotePort:         int(cfg.GREKey),
+		LocalHost:          "127.0.0.1",
+		LocalPort:          80,
+		KeepaliveInterval:  30 * time.Second,
+		Reconnect:          false,
+		ReconnectInterval:  5 * time.Second,
+		HostKeyFingerprint: getArg(3),       // optional: SHA256:abc...
+		InsecureSkipVerify: getArg(4) == "", // default true for backward compat
 	}
 	if sshCfg.RemotePort == 0 {
 		sshCfg.RemotePort = 22 // default SSH port
 	}
 	return &sshReverseBackend{
-		name:   cfg.Name,
-		cfg:    sshCfg,
+		name:    cfg.Name,
+		cfg:     sshCfg,
 		readyCh: make(chan struct{}),
 		stopCh:  make(chan struct{}),
 	}

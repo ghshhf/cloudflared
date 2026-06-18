@@ -36,12 +36,12 @@ import (
 // Use cases: IoT device communication, sensor data relay, telemetry
 // aggregation through the SkyNet tunnel layer.
 type mqttBackend struct {
-	name   string
-	cfg    mqttConfig
-	ln     net.Listener
+	name    string
+	cfg     mqttConfig
+	ln      net.Listener
 	readyCh chan struct{}
 	stopCh  chan struct{}
-	wg     sync.WaitGroup
+	wg      sync.WaitGroup
 	metrics atomic.Pointer[metrics.BackendMetrics]
 
 	// Simple topic routing for broker mode
@@ -59,12 +59,12 @@ type mqttConfig struct {
 }
 
 type mqttClient struct {
-	id       string
-	conn     net.Conn
-	clean    bool
-	topics   map[string]byte // subscribed topics with QoS
-	sendCh   chan []byte
-	stopCh   chan struct{}
+	id     string
+	conn   net.Conn
+	clean  bool
+	topics map[string]byte // subscribed topics with QoS
+	sendCh chan []byte
+	stopCh chan struct{}
 }
 
 // MQTT packet types

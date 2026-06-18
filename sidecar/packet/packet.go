@@ -21,12 +21,12 @@ import (
 
 // Protocol numbers (IP Protocol field).
 const (
-	ProtocolICMP  = 1
-	ProtocolTCP   = 6
-	ProtocolUDP    = 17
-	ProtocolGRE    = 47
-	ProtocolIPIP  = 4
-	ProtocolIPv6  = 41
+	ProtocolICMP = 1
+	ProtocolTCP  = 6
+	ProtocolUDP  = 17
+	ProtocolGRE  = 47
+	ProtocolIPIP = 4
+	ProtocolIPv6 = 41
 )
 
 // ---- IPv4 header --------------------------------------------------------
@@ -34,8 +34,8 @@ const (
 // IPv4Header represents a parsed IPv4 header (without options).
 // Minimal implementation sufficient for tunnel encapsulation.
 type IPv4Header struct {
-	Version  uint8  // Version=4
-	IHL      uint8  // Internet Header Length in 32-bit words
+	Version  uint8 // Version=4
+	IHL      uint8 // Internet Header Length in 32-bit words
 	TOS      uint8
 	TotalLen uint16
 	ID       uint16
@@ -112,12 +112,12 @@ func (h IPv4Header) ComputeChecksum() uint16 {
 
 // GREHeader represents a GRE header (no checksum, no key, no sequence).
 type GREHeader struct {
-	Flags      uint8  // Checksum=1, Routing=0, Key=0, Sequence=0, More=1
-	Type       uint16 // Ethertype (e.g. 0x0800 for IPv4)
-	Checksum   uint16 // optional, 0 if not present
-	Offset     uint16 // optional
-	Key        uint32 // optional
-	Sequence   uint32 // optional
+	Flags    uint8  // Checksum=1, Routing=0, Key=0, Sequence=0, More=1
+	Type     uint16 // Ethertype (e.g. 0x0800 for IPv4)
+	Checksum uint16 // optional, 0 if not present
+	Offset   uint16 // optional
+	Key      uint32 // optional
+	Sequence uint32 // optional
 }
 
 // GRE_MIN_HEADER is the minimum GRE header size (without optional fields).
@@ -151,24 +151,55 @@ func ParseGRE(b []byte) (hdr GREHeader, payload []byte, err error) {
 	return hdr, b[offset:], nil
 }
 
-// Marshal serializes the GRE header.
+// Marshal serializes the GRE header, including optional fields when
+// the corresponding flag bits are set.
 func (g GREHeader) Marshal() []byte {
-	// No optional fields for simplicity — bare GRE for IP encapsulation.
-	b := make([]byte, 4)
+	b := make([]byte, 4+g.optionalFieldLen())
 	b[0] = g.Flags
 	b[1] = 0
 	binary.BigEndian.PutUint16(b[2:4], g.Type)
+
+	offset := 4
+	if g.Flags&0x80 != 0 { // Checksum + Routing
+		binary.BigEndian.PutUint16(b[offset:offset+2], g.Checksum)
+		binary.BigEndian.PutUint16(b[offset+2:offset+4], g.Offset)
+		offset += 4
+	}
+	if g.Flags&0x20 != 0 { // Key
+		binary.BigEndian.PutUint32(b[offset:offset+4], g.Key)
+		offset += 4
+	}
+	if g.Flags&0x40 != 0 { // Sequence
+		binary.BigEndian.PutUint32(b[offset:offset+4], g.Sequence)
+		offset += 4
+	}
 	return b
+}
+
+// optionalFieldLen returns the total length of optional GRE fields
+// indicated by flag bits.
+func (g GREHeader) optionalFieldLen() int {
+	n := 0
+	if g.Flags&0x80 != 0 {
+		n += 4 // Checksum (2) + Offset (2)
+	}
+	if g.Flags&0x20 != 0 {
+		n += 4 // Key
+	}
+	if g.Flags&0x40 != 0 {
+		n += 4 // Sequence
+	}
+	return n
 }
 
 // ---- VXLAN (RFC 7348) --------------------------------------------------
 
 // VXLANHeader represents a VXLAN header.
 type VXLANHeader struct {
-	Flags       uint8  // 8-bit flags (I flag must be set)
-	Reserved    [3]uint8
-	VNI         uint32 // 24-bit VXLAN Network Identifier
-	Reserved2   uint8
+	Flags     uint8 // 8-bit flags (I flag must be set)
+	Reserved  [3]uint8
+	VNI       uint32 // 24-bit VXLAN Network Identifier
+	Reserved2 uint8
 }
 
 // ParseVXLAN parses a VXLAN header from a UDP payload.
@@ -359,10 +390,17 @@ func (c ICMPHeader) Marshal() []byte {
 }
 
 // ICMPPingChecksum computes the ICMP checksum (RFC 792).
+// Handles odd-length buffers by padding with a zero byte per specification.
 func ICMPPingChecksum(b []byte) uint16 {
 	sum := uint32(0)
-	for i := 0; i < len(b); i += 2 {
+	i := 0
+	for i+1 < len(b) {
 		sum += uint32(b[i])<<8 | uint32(b[i+1])
+		i += 2
+	}
+	// If odd length, pad with zero byte.
+	if i < len(b) {
+		sum += uint32(b[i]) << 8
 	}
 	for sum > 0xFFFF {
 		sum = (sum & 0xFFFF) + (sum >> 16)

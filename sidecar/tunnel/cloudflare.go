@@ -28,7 +28,7 @@ type cloudflareBackend struct {
 
 	mu       sync.Mutex
 	cmd      *exec.Cmd
-	cancelFn func()     // stop the child process
+	cancelFn func() // stop the child process
 	ready    chan struct{}
 	exited   chan struct{}
 	started  bool
@@ -41,8 +41,8 @@ func newCloudflareBackend(cfg Config) *cloudflareBackend {
 	}
 }
 
-func (b *cloudflareBackend) Name() string { return "cloudflare://" + b.cfg.Name }
-func (b *cloudflareBackend) Type() string { return TypeCloudflare }
+func (b *cloudflareBackend) Name() string           { return "cloudflare://" + b.cfg.Name }
+func (b *cloudflareBackend) Type() string           { return TypeCloudflare }
 func (b *cloudflareBackend) Ready() <-chan struct{} { return b.ready }
 
 func (b *cloudflareBackend) Start(ctx context.Context) error {

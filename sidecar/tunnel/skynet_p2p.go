@@ -27,8 +27,8 @@ func newSkyNetP2PBackend(cfg Config) *skynetP2PBackend {
 	}
 }
 
-func (b *skynetP2PBackend) Name() string { return "skynet-p2p://" + b.cfg.Name }
-func (b *skynetP2PBackend) Type() string { return TypeSkyNetP2P }
+func (b *skynetP2PBackend) Name() string           { return "skynet-p2p://" + b.cfg.Name }
+func (b *skynetP2PBackend) Type() string           { return TypeSkyNetP2P }
 func (b *skynetP2PBackend) Ready() <-chan struct{} { return b.ready }
 
 func (b *skynetP2PBackend) Start(ctx context.Context) error {

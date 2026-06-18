@@ -37,8 +37,8 @@ func newHTTPProxyBackend(cfg Config) *httpProxyBackend {
 	}
 }
 
-func (b *httpProxyBackend) Name() string { return "http-proxy://" + b.cfg.Name }
-func (b *httpProxyBackend) Type() string { return TypeHTTPProxy }
+func (b *httpProxyBackend) Name() string           { return "http-proxy://" + b.cfg.Name }
+func (b *httpProxyBackend) Type() string           { return TypeHTTPProxy }
 func (b *httpProxyBackend) Ready() <-chan struct{} { return b.ready }
 
 func (b *httpProxyBackend) Start(ctx context.Context) error {

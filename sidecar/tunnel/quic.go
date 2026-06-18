@@ -36,8 +36,8 @@ type quicBackend struct {
 	stopped bool
 
 	// QUIC-specific settings.
-	quicAddr   string // QUIC server address
-	connLatency int64 // last measured RTT in ms
+	quicAddr    string // QUIC server address
+	connLatency int64  // last measured RTT in ms
 }
 
 // newQUICBackend creates a new QUIC-backed tunnel.
@@ -48,8 +48,8 @@ func newQUICBackend(cfg Config) *quicBackend {
 	}
 }
 
-func (b *quicBackend) Name() string { return "quic://" + b.cfg.Name }
-func (b *quicBackend) Type() string { return "quic" }
+func (b *quicBackend) Name() string           { return "quic://" + b.cfg.Name }
+func (b *quicBackend) Type() string           { return "quic" }
 func (b *quicBackend) Ready() <-chan struct{} { return b.ready }
 
 func (b *quicBackend) Start(ctx context.Context) error {
