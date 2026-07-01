@@ -1,6 +1,6 @@
 # cloudflared (SkyNet SSI Enhanced Fork) — 12 个月更新计划
 
-> **项目定位**：Cloudflare Tunnel 官方客户端的全平台增强版 fork，通过 SkyNet SSI sidecar 层将其从 CLI 工具升级为可托管的系统组件，并扩展为 18 协议通用传输层。
+> **项目定位**：独立的全平台内网穿透平台，通过 SkyNet SSI sidecar 层将 cloudflared（初始 backend）改造为可托管的系统组件，并扩展为 18 协议通用传输层。自 fork 增强版发布那一刻起完全独立，不依赖上游同步。
 >
 > **当前状态**：sidecar MVP 完成（v0.4.0，~17k SLOC，270 测试用例），0 外部用户/贡献者，skynet-p2p stub 未实现。
 >
@@ -12,15 +12,13 @@
 
 - [🔴 P0] **完整实现 `skynet-p2p` 后端** — 当前是 stub。基于 WebRTC ICE + STUN/TURN 做 NAT 穿透 + DHT/信令服务器做 peer discovery + UDP hole-punching
 - [🔴 P0] **创建 git tag + 发布流程** — 补打 `skynet/v0.1.0` ~ `skynet/v0.4.0` 的 tag；创建 CHANGELOG.md；之后每次发布打 tag + 写 Release Notes
-- [🟠 P1] **修复 `check.yaml` CI** — 上游的 Go 版本锁死在 1.22.x，但 go.mod 要求 1.26，CI 等于没用
 - [🟠 P1] **修复 `RecentLogs()` 返回 nil** — `cloudflare.go:251` 当前什么都不返回，IPC get_logs 没输出
 - [🟡 P2] **实现 cloudflared 二进制自动下载** — sidecar init 时自动检测本地缺二进制，从 GitHub Releases 下载并校验 SHA256
 - [🟡 P2] **proxy_pool 加缓存 + 限流** — 当前每次请求都直连 20+ 源，加 5 分钟内存缓存 + 速率限制
 
-## M2（8月）— 测试 + 安全基线 + 上游同步
+## M2（8月）— 测试 + 安全基线
 
 - [🔴 P0] **集成测试框架** — 当前只有单元测试。用 Docker Compose 搭 mock Cloudflare edge + sidecar，端到端验证隧道连通性
-- [🔴 P0] **首次上游同步** — 合并 upstream cloudflared master 最新 commit，解决三个冲突文件（`config/model.go`、`connection/header.go`、`cmd/cloudflared/tunnel/cmd.go`）
 - [🟠 P1] **权限审计** — 检查 manifest.json 声明的权限是否精确，剔除多余的
 - [🟠 P1] **SSH HostKey 指纹验证 fail-closed** — 当前没配指纹也能连，改成没配置就拒绝连接
 - [🟠 P1] **DNS/ICMP 隧道加密评估** — DNS 用 base32 明文、ICMP 用固定 XOR key，评估是否升级到 AEAD
@@ -31,7 +29,7 @@
 - [🔴 P0] **Web Dashboard 功能补齐** — 当前只展示基本状态。加：实时日志流（SSE）、一键切换 backend、流量图表、配置编辑
 - [🟠 P1] **开发者文档站** — 基于 GitHub Pages 或 VitePress 搭文档站：SSI 协议、backend 开发指南、发布流程
 - [🟠 P1] **manifest.json 更新** — 版本升到 v0.5.0，补充新 backend 和 enhancement 列表
-- [🟡 P2] **sidecar Makefile 优化** — 加 `make release`（自动 tag + build + Release）、`make upsync`（合并上游）、`make integ-test`
+- [🟡 P2] **sidecar Makefile 优化** — 加 `make release`（自动 tag + build + Release）、`make integ-test`
 - [🟡 P2] **golangci-lint 全绿** — 确认 CI 上 lint 全通过，设为阻断项
 
 ## M4（10月）— 性能 + 可靠性
@@ -45,7 +43,7 @@
 
 ## M5（11月）— 安全深度审计
 
-- [🔴 P0] **外部安全审计** — 请社区安全研究员对 sidecar 做 blinded review，重点看 IPC 接口、配置文件解析、backend 数据传输
+- [🔴 P0] **AI 驱动全模块安全审计** — 用 AI 对 sidecar 每个模块做 STRIDE 分类扫描：IPC 接口输入校验、配置文件注入、backend 数据传输加密、状态机边界条件。输出漏洞清单 + 修复方案（零成本，不需要外部安全团队）
 - [🔴 P0] **STRIDE 威胁建模** — 对 sidecar 全模块做 STRIDE 分析，出威胁矩阵 + 缓解措施表
 - [🟠 P1] **govulncheck CI** — 对 vendor 目录做定期 CVE 扫描，发现漏洞自动通知
 - [🟠 P1] **JSON-RPC 输入校验** — 加参数 schema 校验（字符串长度上限、嵌套深度限制），不依赖 panic recover
@@ -117,19 +115,8 @@
 | skynet-p2p 未实现（stub） | 🔴 P0 | 18 协议的旗舰功能不可用 | 品牌承诺与实际脱节 |
 | RecentLogs 返回 nil | 🟠 P1 | IPC get_logs 没输出 | 上层无法排查故障 |
 | 无 git tag | 🟠 P1 | 无法精确回溯版本 | 版本管理混乱 |
-| check.yaml Go 版本过时 | 🟠 P1 | CI 可能假绿 | 合入前才发现兼容性问题 |
 | proxy_pool 无缓存/限流 | 🟠 P1 | 多实例同时启动被源站限流 | 生产环境不可靠 |
 | manifest 版本滞留在 v0.2.0 | 🟡 P2 | 与实际代码不符 | 用户/工具看到错误版本号 |
-
-## 上游同步策略
-
-| 频率 | 时机 | 做什么 |
-|------|------|--------|
-| 每月一次（正常） | 每月初 | 仅合入安全更新 + 小 bugfix |
-| 即时（紧急） | CVE 发布时 | 上游安全补丁 24h 内合入 |
-| 每季一次（大版本） | 上游打标签时 | 全量回归测试 + 冲突处理 |
-
-预计常规同步冲突范围：`config/model.go`（~10 行）、`connection/header.go`（~30 行）、`cmd/cloudflared/tunnel/cmd.go`（~20 行）。
 
 ---
 
